@@ -1,0 +1,16 @@
+# Xcode user and build state
+DerivedData/
+build/
+
+# Xcode workspace user settings
+*.xcuserdatad/
+*.xcuserstate
+
+# Swift Package Manager
+.build/
+
+# Test and diagnostics artifacts
+*.xcresult
+
+# macOS filesystem noise
+.DS_Store
