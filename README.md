@@ -2,6 +2,10 @@
 
 Flint is a native SwiftUI markdown note-taking app built around user-selected vault folders in Files providers such as local storage and Dropbox.
 
+![Flint launch artwork](/Users/lukeryan/src/flint-ios/Flint/Resources/Assets.xcassets/FlintBrandBoard.imageset/flint-brand-board.png)
+
+Strike a spark. Keep every note in a markdown vault you own.
+
 ## Current scope
 
 - Create a vault by choosing a parent folder and supplying a custom vault name.

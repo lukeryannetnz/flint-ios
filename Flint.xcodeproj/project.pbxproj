@@ -18,6 +18,8 @@
 		A10000010000000000000009 /* FolderPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000010000000000000109 /* FolderPicker.swift */; };
 		A1000001000000000000000A /* AppModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000010A /* AppModelTests.swift */; };
 		A1000001000000000000000B /* VaultFileServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000010B /* VaultFileServiceTests.swift */; };
+		A1000001000000000000000C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000010C /* Assets.xcassets */; };
+		A1000001000000000000000D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000010D /* LaunchScreen.storyboard */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -42,6 +44,8 @@
 		A10000010000000000000109 /* FolderPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderPicker.swift; sourceTree = "<group>"; };
 		A1000001000000000000010A /* AppModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelTests.swift; sourceTree = "<group>"; };
 		A1000001000000000000010B /* VaultFileServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultFileServiceTests.swift; sourceTree = "<group>"; };
+		A1000001000000000000010C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A1000001000000000000010D /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		A10000010000000000000130 /* Flint.Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Flint.Debug.xcconfig; sourceTree = "<group>"; };
 		A10000010000000000000131 /* Flint.Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Flint.Release.xcconfig; sourceTree = "<group>"; };
 		A10000010000000000000132 /* FlintTests.Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = FlintTests.Debug.xcconfig; sourceTree = "<group>"; };
@@ -87,6 +91,7 @@
 				A10000010000000000000074 /* Services */,
 				A10000010000000000000075 /* ViewModels */,
 				A10000010000000000000076 /* Views */,
+				A10000010000000000000136 /* Resources */,
 			);
 			path = Flint;
 			sourceTree = "<group>";
@@ -135,6 +140,15 @@
 				A10000010000000000000109 /* FolderPicker.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		A10000010000000000000136 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A1000001000000000000010C /* Assets.xcassets */,
+				A1000001000000000000010D /* LaunchScreen.storyboard */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		A10000010000000000000135 /* Configs */ = {
@@ -230,6 +244,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1000001000000000000000C /* Assets.xcassets in Resources */,
+				A1000001000000000000000D /* LaunchScreen.storyboard in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -335,6 +351,7 @@
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Flint;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -362,6 +379,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Flint;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";

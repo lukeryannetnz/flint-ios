@@ -8,50 +8,93 @@ struct VaultOnboardingView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 24) {
-                Spacer()
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.04, green: 0.05, blue: 0.08),
+                        Color(red: 0.09, green: 0.06, blue: 0.11),
+                        Color(red: 0.03, green: 0.04, blue: 0.06)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
 
-                VStack(spacing: 12) {
-                    Text("flint")
-                        .font(.system(size: 42, weight: .bold, design: .rounded))
+                Circle()
+                    .fill(Color(red: 1.0, green: 0.39, blue: 0.19).opacity(0.18))
+                    .frame(width: 320, height: 320)
+                    .blur(radius: 80)
+                    .offset(x: 120, y: -260)
 
-                    Text("A markdown vault that lives in your folders.")
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
+                Circle()
+                    .fill(Color(red: 0.1, green: 0.78, blue: 0.95).opacity(0.12))
+                    .frame(width: 280, height: 280)
+                    .blur(radius: 90)
+                    .offset(x: -140, y: 220)
 
-                VStack(spacing: 16) {
-                    Button {
-                        isShowingCreateFlow = true
-                    } label: {
-                        Label("Create Vault", systemImage: "folder.badge.plus")
-                            .frame(maxWidth: .infinity)
+                ScrollView {
+                    VStack(spacing: 24) {
+                        Spacer(minLength: 16)
+
+                        Image("FlintBrandBoard")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: 440)
+                            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                            }
+                            .shadow(color: .black.opacity(0.35), radius: 30, y: 16)
+
+                        VStack(spacing: 12) {
+                            Text("flint")
+                                .font(.system(size: 44, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+
+                            Text("Strike a spark. Keep every note in a markdown vault you own.")
+                                .font(.headline)
+                                .foregroundStyle(Color.white.opacity(0.8))
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: 460)
+                        }
+
+                        VStack(spacing: 16) {
+                            Button {
+                                isShowingCreateFlow = true
+                            } label: {
+                                Label("Create Vault", systemImage: "folder.badge.plus")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(Color(red: 1.0, green: 0.44, blue: 0.17))
+                            .controlSize(.large)
+
+                            Button {
+                                isShowingOpenPicker = true
+                            } label: {
+                                Label("Open Vault", systemImage: "folder")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(Color.white.opacity(0.9))
+                            .controlSize(.large)
+                        }
+                        .frame(maxWidth: 420)
+
+                        Text("Choose a folder from Files, including Dropbox. Flint stores notes directly as markdown files you can keep, sync, and inspect outside the app.")
+                            .font(.footnote)
+                            .foregroundStyle(Color.white.opacity(0.68))
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 460)
+
+                        Spacer(minLength: 24)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-
-                    Button {
-                        isShowingOpenPicker = true
-                    } label: {
-                        Label("Open Vault", systemImage: "folder")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 20)
                 }
-                .frame(maxWidth: 420)
-
-                Text("Pick any folder from Files, including Dropbox. Flint stores notes directly as markdown files.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 420)
-
-                Spacer()
             }
-            .padding(24)
-            .navigationTitle("Welcome")
+            .toolbar(.hidden, for: .navigationBar)
         }
         .sheet(isPresented: $isShowingOpenPicker) {
             FolderPicker { url in
