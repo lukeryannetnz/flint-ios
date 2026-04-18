@@ -5,6 +5,7 @@ build/
 # Xcode workspace user settings
 *.xcuserdatad/
 *.xcuserstate
+Configs/Local.xcconfig
 
 # Swift Package Manager
 .build/

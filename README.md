@@ -21,4 +21,4 @@ Flint is a native SwiftUI markdown note-taking app built around user-selected va
 
 ## Signing
 
-The committed project intentionally omits a fixed `DEVELOPMENT_TEAM` so contributors can select their own Apple development team in Xcode before running on a device.
+The repo uses `Configs/Local.xcconfig` for local-only signing overrides. The example file in `Configs/Local.xcconfig.example` shows the expected key. Contributors can create their own local override without committing team-specific settings.

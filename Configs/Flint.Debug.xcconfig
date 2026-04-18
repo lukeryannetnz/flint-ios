@@ -1,0 +1,3 @@
+#include? "Local.xcconfig"
+
+DEVELOPMENT_TEAM = $(FLINT_DEVELOPMENT_TEAM)

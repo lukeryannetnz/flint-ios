@@ -42,6 +42,11 @@
 		A10000010000000000000109 /* FolderPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderPicker.swift; sourceTree = "<group>"; };
 		A1000001000000000000010A /* AppModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelTests.swift; sourceTree = "<group>"; };
 		A1000001000000000000010B /* VaultFileServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultFileServiceTests.swift; sourceTree = "<group>"; };
+		A10000010000000000000130 /* Flint.Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Flint.Debug.xcconfig; sourceTree = "<group>"; };
+		A10000010000000000000131 /* Flint.Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Flint.Release.xcconfig; sourceTree = "<group>"; };
+		A10000010000000000000132 /* FlintTests.Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = FlintTests.Debug.xcconfig; sourceTree = "<group>"; };
+		A10000010000000000000133 /* FlintTests.Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = FlintTests.Release.xcconfig; sourceTree = "<group>"; };
+		A10000010000000000000134 /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.xcconfig.example; sourceTree = "<group>"; };
 		A10000010000000000000120 /* Flint.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Flint.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000010000000000000121 /* FlintTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FlintTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -69,6 +74,7 @@
 			children = (
 				A10000010000000000000071 /* Flint */,
 				A10000010000000000000072 /* FlintTests */,
+				A10000010000000000000135 /* Configs */,
 				A10000010000000000000073 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -129,6 +135,18 @@
 				A10000010000000000000109 /* FolderPicker.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		A10000010000000000000135 /* Configs */ = {
+			isa = PBXGroup;
+			children = (
+				A10000010000000000000130 /* Flint.Debug.xcconfig */,
+				A10000010000000000000131 /* Flint.Release.xcconfig */,
+				A10000010000000000000132 /* FlintTests.Debug.xcconfig */,
+				A10000010000000000000133 /* FlintTests.Release.xcconfig */,
+				A10000010000000000000134 /* Local.xcconfig.example */,
+			);
+			path = Configs;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -308,6 +326,7 @@
 		};
 		A100000100000000000000B0 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000010000000000000130 /* Flint.Debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_STYLE = Automatic;
@@ -335,6 +354,7 @@
 		};
 		A100000100000000000000B1 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000010000000000000131 /* Flint.Release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_STYLE = Automatic;
@@ -361,6 +381,7 @@
 		};
 		A100000100000000000000C0 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000010000000000000132 /* FlintTests.Debug.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -376,6 +397,7 @@
 		};
 		A100000100000000000000C1 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000010000000000000133 /* FlintTests.Release.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
