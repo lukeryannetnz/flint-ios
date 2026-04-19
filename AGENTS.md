@@ -1,5 +1,11 @@
 # AGENTS.md
 
+## OpenSpec Requirement
+
+Before building any feature or making any code, spec, or configuration change in this repository, update the relevant OpenSpec documentation first.
+
+Use the specs under `openspec/specs/` to define or revise the intended behavior before implementation work begins.
+
 ## Testing Requirement
 
 After any code or configuration change in this repository, run the full Flint test suite before handing work back.

@@ -44,7 +44,7 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertEqual(try service.readNote(at: noteURL), "# Daily Note\nUpdated body")
     }
 
-    func testListMarkdownNotesCapturesFolderPreviewAndModifiedOrder() throws {
+    func testListMarkdownNotesCapturesFolderPreviewAndDates() throws {
         let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
         let projectFolderURL = vaultURL.appendingPathComponent("Projects", isDirectory: true)
         try FileManager.default.createDirectory(at: projectFolderURL, withIntermediateDirectories: true)
@@ -55,10 +55,12 @@ final class VaultFileServiceTests: XCTestCase {
         try "# Alpha\nfirst note body".write(to: olderNoteURL, atomically: true, encoding: .utf8)
         try "# Beta\nsecond note body".write(to: newerNoteURL, atomically: true, encoding: .utf8)
 
-        let olderDate = Date(timeIntervalSince1970: 100)
-        let newerDate = Date(timeIntervalSince1970: 200)
-        try FileManager.default.setAttributes([.modificationDate: olderDate], ofItemAtPath: olderNoteURL.path)
-        try FileManager.default.setAttributes([.modificationDate: newerDate], ofItemAtPath: newerNoteURL.path)
+        let olderCreationDate = Date(timeIntervalSince1970: 100)
+        let newerCreationDate = Date(timeIntervalSince1970: 200)
+        let olderModifiedDate = Date(timeIntervalSince1970: 300)
+        let newerModifiedDate = Date(timeIntervalSince1970: 400)
+        try FileManager.default.setAttributes([.creationDate: olderCreationDate, .modificationDate: olderModifiedDate], ofItemAtPath: olderNoteURL.path)
+        try FileManager.default.setAttributes([.creationDate: newerCreationDate, .modificationDate: newerModifiedDate], ofItemAtPath: newerNoteURL.path)
 
         let notes = try service.listMarkdownNotes(in: vaultURL)
 
@@ -66,6 +68,7 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertEqual(notes.first?.folderPath, "Projects")
         XCTAssertEqual(notes.first?.folderName, "Projects")
         XCTAssertEqual(notes.first?.previewText, "# Beta second note body")
-        XCTAssertEqual(notes.first?.lastModifiedAt, newerDate)
+        XCTAssertEqual(notes.first?.createdAt, newerCreationDate)
+        XCTAssertEqual(notes.first?.lastModifiedAt, newerModifiedDate)
     }
 }

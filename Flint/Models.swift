@@ -12,6 +12,7 @@ struct NoteItem: Identifiable, Hashable {
     let folderPath: String
     let folderName: String
     let previewText: String
+    let createdAt: Date
     let lastModifiedAt: Date
 
     var id: URL { url }
@@ -71,7 +72,11 @@ private struct FolderAccumulator {
             }
 
         let sortedNotes = notes.sorted {
-            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            if $0.createdAt != $1.createdAt {
+                return $0.createdAt > $1.createdAt
+            }
+
+            return $0.relativePath.localizedCaseInsensitiveCompare($1.relativePath) == .orderedAscending
         }
 
         return VaultFolder(path: path, name: name, childFolders: folders, notes: sortedNotes)
