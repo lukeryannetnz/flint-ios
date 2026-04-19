@@ -136,6 +136,8 @@ final class AppModel: ObservableObject {
 
     func saveCurrentNoteIfNeeded() async {
         guard hasUnsavedChanges, let selectedNote else { return }
+        autosaveTask?.cancel()
+        autosaveTask = nil
 
         do {
             try fileService.saveNote(noteText, at: selectedNote.url)
