@@ -61,7 +61,7 @@ final class VaultFileService: VaultFileServing {
 
             let enumerator = fileManager.enumerator(
                 at: coordinatedVaultURL,
-                includingPropertiesForKeys: [.isRegularFileKey],
+                includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
                 options: [.skipsHiddenFiles]
             )
 
@@ -75,15 +75,32 @@ final class VaultFileService: VaultFileServing {
                         of: coordinatedVaultURL.path + "/",
                         with: ""
                     )
+                    let folderURL = url.deletingLastPathComponent()
+                    let relativeFolderPath = folderURL.path.replacingOccurrences(
+                        of: coordinatedVaultURL.path,
+                        with: ""
+                    )
+                    let normalizedFolderPath = relativeFolderPath
+                        .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                    let resourceValues = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+                    let previewText = (try? makePreviewText(for: url)) ?? ""
 
                     return NoteItem(
                         url: url,
                         title: url.deletingPathExtension().lastPathComponent,
-                        relativePath: relativePath
+                        relativePath: relativePath,
+                        folderPath: normalizedFolderPath,
+                        folderName: normalizedFolderPath.components(separatedBy: "/").last.flatMap { $0.isEmpty ? nil : $0 } ?? "Vault",
+                        previewText: previewText,
+                        lastModifiedAt: resourceValues?.contentModificationDate ?? .distantPast
                     )
                 }
                 .sorted { (lhs: NoteItem, rhs: NoteItem) in
-                    lhs.relativePath.localizedCaseInsensitiveCompare(rhs.relativePath) == .orderedAscending
+                    if lhs.lastModifiedAt != rhs.lastModifiedAt {
+                        return lhs.lastModifiedAt > rhs.lastModifiedAt
+                    }
+
+                    return lhs.relativePath.localizedCaseInsensitiveCompare(rhs.relativePath) == .orderedAscending
                 }
 
             return notes
@@ -143,6 +160,19 @@ final class VaultFileService: VaultFileServing {
     private func validatedMarkdownFilename(_ name: String) throws -> String {
         let trimmed = try validatedDisplayName(name)
         return trimmed.lowercased().hasSuffix(".md") ? trimmed : "\(trimmed).md"
+    }
+
+    private func makePreviewText(for url: URL) throws -> String {
+        let contents = try String(contentsOf: url, encoding: .utf8)
+        let condensed = contents
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return String(condensed.prefix(180))
     }
 
     private func coordinatedRead<T>(at url: URL, accessor: (URL) throws -> T) throws -> T {

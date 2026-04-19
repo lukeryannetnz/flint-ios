@@ -139,6 +139,7 @@ final class AppModel: ObservableObject {
 
         do {
             try fileService.saveNote(noteText, at: selectedNote.url)
+            try reloadNotes()
             hasUnsavedChanges = false
         } catch {
             alertMessage = error.localizedDescription

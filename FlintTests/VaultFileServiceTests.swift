@@ -38,6 +38,34 @@ final class VaultFileServiceTests: XCTestCase {
 
         let notes = try service.listMarkdownNotes(in: vaultURL)
         XCTAssertEqual(notes.map(\.relativePath), ["Daily Note.md"])
+        XCTAssertEqual(notes.first?.folderPath, "")
+        XCTAssertEqual(notes.first?.folderName, "Vault")
+        XCTAssertEqual(notes.first?.previewText, "# Daily Note Updated body")
         XCTAssertEqual(try service.readNote(at: noteURL), "# Daily Note\nUpdated body")
+    }
+
+    func testListMarkdownNotesCapturesFolderPreviewAndModifiedOrder() throws {
+        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+        let projectFolderURL = vaultURL.appendingPathComponent("Projects", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectFolderURL, withIntermediateDirectories: true)
+
+        let olderNoteURL = projectFolderURL.appendingPathComponent("Alpha.md")
+        let newerNoteURL = projectFolderURL.appendingPathComponent("Beta.md")
+
+        try "# Alpha\nfirst note body".write(to: olderNoteURL, atomically: true, encoding: .utf8)
+        try "# Beta\nsecond note body".write(to: newerNoteURL, atomically: true, encoding: .utf8)
+
+        let olderDate = Date(timeIntervalSince1970: 100)
+        let newerDate = Date(timeIntervalSince1970: 200)
+        try FileManager.default.setAttributes([.modificationDate: olderDate], ofItemAtPath: olderNoteURL.path)
+        try FileManager.default.setAttributes([.modificationDate: newerDate], ofItemAtPath: newerNoteURL.path)
+
+        let notes = try service.listMarkdownNotes(in: vaultURL)
+
+        XCTAssertEqual(notes.map(\.title), ["Beta", "Alpha"])
+        XCTAssertEqual(notes.first?.folderPath, "Projects")
+        XCTAssertEqual(notes.first?.folderName, "Projects")
+        XCTAssertEqual(notes.first?.previewText, "# Beta second note body")
+        XCTAssertEqual(notes.first?.lastModifiedAt, newerDate)
     }
 }
