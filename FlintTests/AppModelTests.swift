@@ -52,7 +52,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.selectedNote?.lastModifiedAt, refreshedNote.lastModifiedAt)
     }
 
-    func testMarkdownDocumentParsesRichBlocks() {
+    func testMarkdownDocumentRendersRichHTML() {
         let markdown = """
         # Daily
 
@@ -60,6 +60,9 @@ final class AppModelTests: XCTestCase {
 
         - one
         - two
+
+        1. first
+        2. second
 
         - [x] done
         - [ ] next
@@ -79,11 +82,28 @@ final class AppModelTests: XCTestCase {
 
         let document = MarkdownDocument(noteTitle: "Daily", markdown: markdown)
 
-        XCTAssertEqual(document.blocks.count, 7)
-        XCTAssertEqual(document.blocks[0], .paragraph("Intro paragraph with a [link](https://example.com)."))
-        XCTAssertEqual(document.blocks[1], .bulletList(["one", "two"]))
-        XCTAssertEqual(document.blocks[2], .checklist([ChecklistItem(text: "done", isChecked: true), ChecklistItem(text: "next", isChecked: false)]))
-        XCTAssertEqual(document.blocks[6], .image(alt: "Sketch", source: "diagram.png"))
+        XCTAssertFalse(document.markdown.hasPrefix("# Daily"))
+        XCTAssertTrue(document.html.contains("<a href=\"https://example.com\">link</a>"))
+        XCTAssertTrue(document.html.contains("<ul><li>one</li><li>two</li></ul>"))
+        XCTAssertTrue(document.html.contains("<ol><li>first</li><li>second</li></ol>"))
+        XCTAssertTrue(document.html.contains("<ul class=\"task-list\">"))
+        XCTAssertTrue(document.html.contains("<blockquote><p>quoted line</p></blockquote>"))
+        XCTAssertTrue(document.html.contains("<table>"))
+        XCTAssertTrue(document.html.contains("<pre><code class=\"language-swift\">"))
+        XCTAssertTrue(document.html.contains("<figure class=\"md-image\"><img src=\"diagram.png\" alt=\"Sketch\" loading=\"lazy\"><figcaption>Sketch</figcaption></figure>"))
+    }
+
+    func testMarkdownDocumentRendersYouTubeEmbedAsThumbnail() {
+        let markdown = """
+        ![Embedded YouTube video](https://www.youtube.com/embed/k51Q4ibkhDk?feature=oembed&autoplay=true)
+        """
+
+        let document = MarkdownDocument(noteTitle: "Video", markdown: markdown)
+
+        XCTAssertTrue(document.html.contains("class=\"md-video-thumb\""))
+        XCTAssertTrue(document.html.contains("https://www.youtube.com/watch?v=k51Q4ibkhDk"))
+        XCTAssertTrue(document.html.contains("https://i.ytimg.com/vi/k51Q4ibkhDk/hqdefault.jpg"))
+        XCTAssertTrue(document.html.contains("<figcaption>Embedded YouTube video</figcaption>"))
     }
 
     func testVaultFolderBuildsNestedTreeFromNotes() {

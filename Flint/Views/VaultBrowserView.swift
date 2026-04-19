@@ -1,4 +1,6 @@
 import SwiftUI
+import UIKit
+import WebKit
 
 struct VaultBrowserView: View {
     private enum SwipeBackBehavior {
@@ -125,6 +127,7 @@ struct VaultBrowserView: View {
         if let selectedNote = model.selectedNote {
             NoteDocumentView(
                 note: selectedNote,
+                vaultURL: model.activeVault?.url,
                 text: Binding(
                     get: { model.noteText },
                     set: { model.updateNoteText($0) }
@@ -324,6 +327,7 @@ private enum DocumentPresentationMode: String, CaseIterable, Identifiable {
 
 private struct NoteDocumentView: View {
     let note: NoteItem
+    let vaultURL: URL?
     @Binding var text: String
     @Binding var presentationMode: DocumentPresentationMode
     @Binding var isInlineEditing: Bool
@@ -339,64 +343,76 @@ private struct NoteDocumentView: View {
             Color(uiColor: .systemGroupedBackground)
                 .ignoresSafeArea()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(note.title)
-                            .font(.system(size: 34, weight: .semibold, design: .serif))
-                            .foregroundStyle(Color.primary)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Color.clear
+                        .frame(height: 0)
+                        .id("note-top")
 
-                        HStack(spacing: 12) {
-                            Text(note.relativePath)
-                            Text(note.lastEditedDisplayText)
-                        }
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 24) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(note.title)
+                                .font(.system(size: 34, weight: .semibold, design: .serif))
+                                .foregroundStyle(Color.primary)
 
-                        if !isInlineEditing {
-                            Picker("View Mode", selection: $presentationMode) {
-                                ForEach(DocumentPresentationMode.allCases) { mode in
-                                    Text(mode.title).tag(mode)
+                            HStack(spacing: 12) {
+                                Text(note.relativePath)
+                                Text(note.lastEditedDisplayText)
+                                Spacer()
+                                if !isInlineEditing {
+                                    DocumentModeMenu(presentationMode: $presentationMode)
                                 }
                             }
-                            .pickerStyle(.segmented)
-                            .frame(maxWidth: 280)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                         }
-                    }
 
-                    if presentationMode == .markdown || isInlineEditing {
-                        TextEditor(text: $text)
-                            .font(.system(size: 17, weight: .regular, design: .default))
-                            .frame(minHeight: 420)
-                            .padding(18)
-                            .background(documentSurface)
-                            .overlay(alignment: .topTrailing) {
-                                if isInlineEditing {
-                                    Button("Done") {
-                                        withAnimation(.easeInOut(duration: 0.2)) {
-                                            isInlineEditing = false
+                        if presentationMode == .markdown || isInlineEditing {
+                            TextEditor(text: $text)
+                                .id("editor-\(note.url.path)")
+                                .font(.system(size: 17, weight: .regular, design: .default))
+                                .frame(minHeight: 420)
+                                .padding(18)
+                                .background(documentSurface)
+                                .overlay(alignment: .topTrailing) {
+                                    if isInlineEditing {
+                                        Button("Done") {
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                isInlineEditing = false
+                                            }
                                         }
+                                        .padding(14)
                                     }
-                                    .padding(14)
                                 }
-                            }
-                    } else {
-                        MarkdownDocumentView(document: document)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    isInlineEditing = true
+                        } else {
+                            MarkdownDocumentView(
+                                document: document,
+                                noteURL: note.url,
+                                vaultURL: vaultURL
+                            )
+                                .id("rendered-\(note.url.path)")
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        isInlineEditing = true
+                                    }
                                 }
-                            }
-                            .padding(22)
-                            .background(documentSurface)
+                                .padding(22)
+                                .background(documentSurface)
+                        }
                     }
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 28)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, 22)
-                .padding(.vertical, 28)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .scrollDismissesKeyboard(.interactively)
+                .onChange(of: note.url) { _, _ in
+                    proxy.scrollTo("note-top", anchor: .top)
+                }
+                .onAppear {
+                    proxy.scrollTo("note-top", anchor: .top)
+                }
             }
-            .scrollDismissesKeyboard(.interactively)
 
             VStack {
                 Spacer()
@@ -423,6 +439,26 @@ private struct NoteDocumentView: View {
 
     private var documentSurface: some ShapeStyle {
         Color(uiColor: .secondarySystemBackground)
+    }
+}
+
+private struct DocumentModeMenu: View {
+    @Binding var presentationMode: DocumentPresentationMode
+
+    var body: some View {
+        Menu {
+            ForEach(DocumentPresentationMode.allCases) { mode in
+                Button {
+                    presentationMode = mode
+                } label: {
+                    Label(mode.title, systemImage: presentationMode == mode ? "checkmark" : mode.iconName)
+                }
+            }
+        } label: {
+            Label(presentationMode.title, systemImage: presentationMode.iconName)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -553,139 +589,93 @@ private struct BreadcrumbChip: View {
 
 private struct MarkdownDocumentView: View {
     let document: MarkdownDocument
+    let noteURL: URL
+    let vaultURL: URL?
+    @State private var contentHeight: CGFloat = 1
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ForEach(document.blocks) { block in
-                MarkdownBlockView(block: block)
-            }
-        }
+        MarkdownWebView(
+            html: document.html,
+            noteURL: noteURL,
+            vaultURL: vaultURL,
+            contentHeight: $contentHeight
+        )
+        .frame(height: max(contentHeight, 1))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-private struct MarkdownBlockView: View {
-    let block: MarkdownBlock
+private struct MarkdownWebView: UIViewRepresentable {
+    let html: String
+    let noteURL: URL
+    let vaultURL: URL?
+    @Binding var contentHeight: CGFloat
 
-    var body: some View {
-        switch block {
-        case let .heading(level, text):
-            markdownText(text, font: headingFont(for: level))
-        case let .paragraph(text):
-            markdownText(text, font: .system(size: 18, weight: .regular, design: .default))
-                .foregroundStyle(.primary)
-        case let .bulletList(items):
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(items, id: \.self) { item in
-                    HStack(alignment: .top, spacing: 10) {
-                        Text("•")
-                        markdownText(item, font: .system(size: 18))
-                    }
-                }
-            }
-        case let .checklist(items):
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(items, id: \.self) { item in
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: item.isChecked ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(item.isChecked ? Color.accentColor : Color.secondary)
-                        markdownText(item.text, font: .system(size: 18))
-                    }
-                }
-            }
-        case let .quote(text):
-            HStack(alignment: .top, spacing: 14) {
-                Rectangle()
-                    .fill(Color(uiColor: .separator))
-                    .frame(width: 3)
-                markdownText(text, font: .system(size: 18, design: .serif))
-                    .foregroundStyle(.secondary)
-            }
-        case let .codeBlock(language, code):
-            VStack(alignment: .leading, spacing: 10) {
-                if let language {
-                    Text(language.uppercased())
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-                ScrollView(.horizontal, showsIndicators: false) {
-                    Text(code)
-                        .font(.system(size: 15, weight: .regular, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .padding(16)
-            .background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        case let .table(headers, rows):
-            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 12) {
-                GridRow {
-                    ForEach(headers, id: \.self) { header in
-                        Text(header)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(contentHeight: $contentHeight)
+    }
 
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    GridRow {
-                        ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-                            markdownText(cell, font: .system(size: 16))
-                        }
-                    }
-                }
-            }
-            .padding(16)
-            .background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        case let .image(alt, source):
-            VStack(alignment: .leading, spacing: 8) {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color(uiColor: .tertiarySystemBackground))
-                    .frame(height: 180)
-                    .overlay {
-                        VStack(spacing: 8) {
-                            Image(systemName: "photo")
-                                .font(.title2)
-                                .foregroundStyle(.secondary)
-                            Text(source)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+    func makeUIView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
 
-                if !alt.isEmpty {
-                    Text(alt)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = context.coordinator
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        webView.scrollView.isScrollEnabled = false
+        webView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return webView
+    }
+
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        let contentKey = "\(noteURL.path)|\(html)"
+        guard context.coordinator.lastContentKey != contentKey else { return }
+        context.coordinator.lastContentKey = contentKey
+        webView.loadHTMLString(html, baseURL: vaultURL ?? noteURL.deletingLastPathComponent())
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        @Binding var contentHeight: CGFloat
+        var lastContentKey: String?
+
+        init(contentHeight: Binding<CGFloat>) {
+            _contentHeight = contentHeight
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            webView.evaluateJavaScript("document.documentElement.scrollHeight") { result, _ in
+                guard let height = result as? CGFloat else { return }
+                DispatchQueue.main.async {
+                    self.contentHeight = height
                 }
             }
         }
-    }
 
-    private func markdownText(_ string: String, font: Font) -> some View {
-        Group {
-            if let attributed = try? AttributedString(markdown: string) {
-                Text(attributed)
-                    .font(font)
-                    .tint(.accentColor)
-            } else {
-                Text(string)
-                    .font(font)
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            if navigationAction.navigationType == .linkActivated, let url = navigationAction.request.url {
+                UIApplication.shared.open(url)
+                decisionHandler(.cancel)
+                return
             }
-        }
-        .multilineTextAlignment(.leading)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
 
-    private func headingFont(for level: Int) -> Font {
-        switch level {
-        case 1:
-            return .system(size: 30, weight: .semibold, design: .serif)
-        case 2:
-            return .system(size: 24, weight: .semibold, design: .serif)
-        case 3:
-            return .system(size: 20, weight: .semibold, design: .serif)
-        default:
-            return .system(size: 18, weight: .semibold, design: .default)
+            decisionHandler(.allow)
+        }
+    }
+}
+
+extension DocumentPresentationMode {
+    var iconName: String {
+        switch self {
+        case .rendered:
+            return "doc.richtext"
+        case .markdown:
+            return "chevron.left.forwardslash.chevron.right"
         }
     }
 }
