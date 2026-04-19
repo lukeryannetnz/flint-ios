@@ -135,10 +135,11 @@ The system SHALL let the user begin editing directly from the rendered markdown 
 
 - GIVEN a note is open in rendered document mode
 - WHEN the user taps within the rendered document surface
-- THEN Flint replaces the rendered document with an inline editor in the same document area
+- THEN Flint replaces the rendered document with an inline rich text editor in the same document area
 - AND the inline editor is focused so the keyboard is shown
 - AND the inline editor preserves the rendered document width and visual frame within the viewport
-- AND the current note text remains the editing source of truth
+- AND Flint edits the note through the rendered document presentation rather than exposing raw markdown syntax
+- AND Flint persists resulting edits back to the note markdown file
 
 #### Scenario: Activate a link from the rendered document
 
@@ -152,8 +153,19 @@ The system SHALL let the user begin editing directly from the rendered markdown 
 
 - GIVEN a note has entered inline editing from the rendered document
 - WHEN the keyboard is shown
-- THEN Flint shows markdown editing controls alongside the keyboard
+- THEN Flint shows rich text editing controls for the rendered document
 - AND the document content area continues to match the rendered document frame
+
+### Requirement: Markdown mode edits source markdown
+
+The system SHALL continue to expose raw markdown editing when the user explicitly selects markdown mode.
+
+#### Scenario: Edit source markdown in markdown mode
+
+- GIVEN a note is open in markdown mode
+- WHEN the user edits the note
+- THEN Flint shows the raw markdown source text
+- AND Flint does not replace that editor with the rendered rich text editor
 
 ### Requirement: Save status in the editor
 
