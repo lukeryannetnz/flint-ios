@@ -88,16 +88,39 @@ final class AppModelTests: XCTestCase {
 
     func testVaultFolderBuildsNestedTreeFromNotes() {
         let notes = [
-            makeNote(title: "Root", url: URL(fileURLWithPath: "/tmp/vault/root.md"), folderPath: ""),
-            makeNote(title: "API", url: URL(fileURLWithPath: "/tmp/vault/Projects/iOS/api.md"), folderPath: "Projects/iOS")
+            makeNote(
+                title: "Root",
+                url: URL(fileURLWithPath: "/tmp/vault/root.md"),
+                folderPath: "",
+                createdAt: .init(timeIntervalSince1970: 100)
+            ),
+            makeNote(
+                title: "API",
+                url: URL(fileURLWithPath: "/tmp/vault/Projects/iOS/api.md"),
+                folderPath: "Projects/iOS",
+                createdAt: .init(timeIntervalSince1970: 200)
+            ),
+            makeNote(
+                title: "Runbook",
+                url: URL(fileURLWithPath: "/tmp/vault/Projects/iOS/runbook.md"),
+                folderPath: "Projects/iOS",
+                createdAt: .init(timeIntervalSince1970: 300)
+            ),
+            makeNote(
+                title: "Zed",
+                url: URL(fileURLWithPath: "/tmp/vault/Zeta/zed.md"),
+                folderPath: "Zeta",
+                createdAt: .init(timeIntervalSince1970: 50)
+            )
         ]
 
         let root = VaultFolder.root(vaultName: "Flint Vault", notes: notes)
 
         XCTAssertEqual(root.notes.map(\.title), ["Root"])
         XCTAssertEqual(root.childFolders.first?.name, "Projects")
+        XCTAssertEqual(root.childFolders.last?.name, "Zeta")
         XCTAssertEqual(root.childFolders.first?.childFolders.first?.name, "iOS")
-        XCTAssertEqual(root.childFolders.first?.childFolders.first?.notes.map(\.title), ["API"])
+        XCTAssertEqual(root.childFolders.first?.childFolders.first?.notes.map(\.title), ["Runbook", "API"])
     }
 }
 
@@ -165,6 +188,7 @@ private func makeNote(
     title: String,
     url: URL,
     folderPath: String = "",
+    createdAt: Date = .distantPast,
     modifiedAt: Date = .distantPast
 ) -> NoteItem {
     NoteItem(
@@ -174,6 +198,7 @@ private func makeNote(
         folderPath: folderPath,
         folderName: folderPath.components(separatedBy: "/").last.flatMap { $0.isEmpty ? nil : $0 } ?? "Vault",
         previewText: "Preview for \(title)",
+        createdAt: createdAt,
         lastModifiedAt: modifiedAt
     )
 }

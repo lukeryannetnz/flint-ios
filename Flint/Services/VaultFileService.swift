@@ -61,7 +61,7 @@ final class VaultFileService: VaultFileServing {
 
             let enumerator = fileManager.enumerator(
                 at: coordinatedVaultURL,
-                includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
+                includingPropertiesForKeys: [.isRegularFileKey, .creationDateKey, .contentModificationDateKey],
                 options: [.skipsHiddenFiles]
             )
 
@@ -82,7 +82,7 @@ final class VaultFileService: VaultFileServing {
                     )
                     let normalizedFolderPath = relativeFolderPath
                         .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                    let resourceValues = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+                    let resourceValues = try? url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
                     let previewText = (try? makePreviewText(for: url)) ?? ""
 
                     return NoteItem(
@@ -92,6 +92,7 @@ final class VaultFileService: VaultFileServing {
                         folderPath: normalizedFolderPath,
                         folderName: normalizedFolderPath.components(separatedBy: "/").last.flatMap { $0.isEmpty ? nil : $0 } ?? "Vault",
                         previewText: previewText,
+                        createdAt: resourceValues?.creationDate ?? .distantPast,
                         lastModifiedAt: resourceValues?.contentModificationDate ?? .distantPast
                     )
                 }

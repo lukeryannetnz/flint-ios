@@ -17,7 +17,9 @@ The system SHALL list markdown files found anywhere inside the active vault.
 - THEN Flint includes regular files with `.md` or `.markdown` extensions
 - AND hidden files are skipped
 - AND each note is shown with its title and vault-relative path
-- AND notes are sorted by relative path using localized case-insensitive ordering
+- AND folders are ordered alphabetically using localized case-insensitive ordering
+- AND notes within each folder are ordered by file creation date with the newest note first
+- AND ties fall back to localized case-insensitive relative-path ordering
 
 ### Requirement: Auto-select an available note
 
