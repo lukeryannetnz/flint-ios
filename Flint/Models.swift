@@ -101,13 +101,15 @@ extension NoteItem {
 }
 
 struct MarkdownDocument: Hashable {
-    let blocks: [MarkdownBlock]
+    let markdown: String
+    let html: String
 
     init(noteTitle: String, markdown: String) {
         let sanitizedLines = markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
         let lines = MarkdownDocument.removingDuplicatedTitle(from: sanitizedLines, noteTitle: noteTitle)
-        var parser = MarkdownDocumentParser(lines: lines)
-        blocks = parser.parse()
+        let normalizedMarkdown = lines.joined(separator: "\n")
+        self.markdown = normalizedMarkdown
+        html = MarkdownHTMLCache.shared.html(for: normalizedMarkdown)
     }
 
     private static func removingDuplicatedTitle(from lines: [String], noteTitle: String) -> [String] {
@@ -134,140 +136,266 @@ struct MarkdownDocument: Hashable {
     }
 }
 
-enum MarkdownBlock: Hashable, Identifiable {
-    case heading(level: Int, text: String)
-    case paragraph(String)
-    case bulletList([String])
-    case checklist([ChecklistItem])
-    case quote(String)
-    case codeBlock(language: String?, code: String)
-    case table(headers: [String], rows: [[String]])
-    case image(alt: String, source: String)
+final class MarkdownHTMLCache {
+    static let shared = MarkdownHTMLCache()
 
-    var id: String {
-        switch self {
-        case let .heading(level, text):
-            return "heading-\(level)-\(text)"
-        case let .paragraph(text):
-            return "paragraph-\(text)"
-        case let .bulletList(items):
-            return "bullet-\(items.joined(separator: "|"))"
-        case let .checklist(items):
-            return "check-\(items.map(\.text).joined(separator: "|"))"
-        case let .quote(text):
-            return "quote-\(text)"
-        case let .codeBlock(language, code):
-            return "code-\(language ?? "plain")-\(code)"
-        case let .table(headers, rows):
-            return "table-\(headers.joined(separator: "|"))-\(rows.flatMap { $0 }.joined(separator: "|"))"
-        case let .image(alt, source):
-            return "image-\(alt)-\(source)"
+    private let cache = NSCache<NSString, NSString>()
+
+    func html(for markdown: String) -> String {
+        let key = markdown as NSString
+        if let cached = cache.object(forKey: key) {
+            return cached as String
         }
+
+        let renderedHTML = MarkdownHTMLRenderer.render(markdown: markdown)
+        let wrappedHTML = MarkdownHTMLRenderer.wrapDocument(body: renderedHTML)
+        cache.setObject(wrappedHTML as NSString, forKey: key)
+        return wrappedHTML
     }
 }
 
-struct ChecklistItem: Hashable {
-    let text: String
-    let isChecked: Bool
-}
-
-private struct MarkdownDocumentParser {
-    private let lines: [String]
-    private var index = 0
-
-    init(lines: [String]) {
-        self.lines = lines
-    }
-
-    mutating func parse() -> [MarkdownBlock] {
-        var blocks: [MarkdownBlock] = []
+private enum MarkdownHTMLRenderer {
+    static func render(markdown: String) -> String {
+        let lines = markdown.components(separatedBy: "\n")
+        var index = 0
+        var blocks: [String] = []
 
         while index < lines.count {
-            let currentLine = lines[index]
-            let trimmed = currentLine.trimmingCharacters(in: .whitespaces)
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             if trimmed.isEmpty {
                 index += 1
                 continue
             }
 
-            if trimmed.hasPrefix("```") {
-                blocks.append(parseCodeBlock())
+            if let fence = fencedCodeDelimiter(in: trimmed) {
+                blocks.append(parseCodeBlock(lines: lines, index: &index, fence: fence))
                 continue
             }
 
-            if let heading = parseHeading(from: trimmed) {
-                blocks.append(heading)
+            if let headingHTML = parseHeading(trimmed) {
+                blocks.append(headingHTML)
                 index += 1
                 continue
             }
 
-            if let image = parseImage(from: trimmed) {
-                blocks.append(image)
+            if isHorizontalRule(trimmed) {
+                blocks.append("<hr />")
                 index += 1
+                continue
+            }
+
+            if isTableHeader(lines: lines, index: index) {
+                blocks.append(parseTable(lines: lines, index: &index))
+                continue
+            }
+
+            if isListLine(trimmed) {
+                blocks.append(parseList(lines: lines, index: &index))
                 continue
             }
 
             if trimmed.hasPrefix(">") {
-                blocks.append(parseQuote())
+                blocks.append(parseBlockquote(lines: lines, index: &index))
                 continue
             }
 
-            if isChecklistLine(trimmed) {
-                blocks.append(parseChecklist())
-                continue
-            }
-
-            if isBulletLine(trimmed) {
-                blocks.append(parseBulletList())
-                continue
-            }
-
-            if isTableHeader(at: index) {
-                blocks.append(parseTable())
-                continue
-            }
-
-            blocks.append(parseParagraph())
+            blocks.append(parseParagraph(lines: lines, index: &index))
         }
 
-        return blocks
+        return blocks.joined(separator: "\n")
     }
 
-    private func parseHeading(from trimmed: String) -> MarkdownBlock? {
-        let hashes = trimmed.prefix { $0 == "#" }
+    static func wrapDocument(body: String) -> String {
+        """
+        <!doctype html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+        <style>
+        :root {
+          color-scheme: light dark;
+          --bg: transparent;
+          --secondary: color-mix(in srgb, currentColor 62%, transparent);
+          --border: color-mix(in srgb, currentColor 14%, transparent);
+          --surface: color-mix(in srgb, currentColor 6%, transparent);
+          --surface-strong: color-mix(in srgb, currentColor 10%, transparent);
+          --link: #0a84ff;
+        }
+        html, body {
+          margin: 0;
+          padding: 0;
+          background: var(--bg);
+          color: CanvasText;
+          font: -apple-system-body;
+          line-height: 1.55;
+          overflow-x: hidden;
+        }
+        body {
+          padding: 0 0 24px 0;
+          word-wrap: break-word;
+        }
+        h1, h2, h3, h4, h5, h6 {
+          line-height: 1.18;
+          margin: 1.25em 0 0.45em;
+        }
+        h1 { font: 700 2rem ui-serif, Georgia, serif; }
+        h2 { font: 700 1.6rem ui-serif, Georgia, serif; }
+        h3 { font: 700 1.25rem ui-serif, Georgia, serif; }
+        p, ul, ol, blockquote, table, pre, figure {
+          margin: 0 0 1rem;
+        }
+        ul, ol {
+          padding-left: 1.4rem;
+        }
+        li + li {
+          margin-top: 0.42rem;
+        }
+        a {
+          color: var(--link);
+          text-decoration: none;
+        }
+        code {
+          font: 0.92rem ui-monospace, SFMono-Regular, Menlo, monospace;
+          background: var(--surface);
+          border-radius: 8px;
+          padding: 0.12rem 0.35rem;
+        }
+        pre {
+          background: var(--surface);
+          border-radius: 18px;
+          padding: 1rem;
+          overflow-x: auto;
+        }
+        pre code {
+          background: transparent;
+          padding: 0;
+          border-radius: 0;
+        }
+        blockquote {
+          border-left: 3px solid var(--border);
+          padding-left: 0.9rem;
+          color: var(--secondary);
+        }
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          border-spacing: 0;
+          display: block;
+          overflow-x: auto;
+          background: var(--surface);
+          border-radius: 16px;
+        }
+        thead {
+          background: var(--surface-strong);
+        }
+        th, td {
+          padding: 0.8rem 0.9rem;
+          border-bottom: 1px solid var(--border);
+          text-align: left;
+          vertical-align: top;
+        }
+        tr:last-child td {
+          border-bottom: none;
+        }
+        .md-image {
+          display: inline-block;
+          max-width: min(320px, 100%);
+        }
+        .md-video-thumb {
+          position: relative;
+          display: inline-block;
+          max-width: min(320px, 100%);
+          text-decoration: none;
+          color: inherit;
+        }
+        .md-image img {
+          width: 100%;
+          max-width: min(320px, 100%);
+          max-height: 220px;
+          object-fit: cover;
+          display: block;
+          border-radius: 18px;
+          background: var(--surface);
+          border: 1px solid var(--border);
+        }
+        .md-video-thumb .md-play-badge {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          transform: translate(-50%, -50%);
+          width: 54px;
+          height: 38px;
+          border-radius: 12px;
+          background: rgba(0, 0, 0, 0.72);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: white;
+          font-size: 20px;
+          line-height: 1;
+          pointer-events: none;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+        }
+        .md-image figcaption {
+          margin-top: 0.45rem;
+          font-size: 0.82rem;
+          color: var(--secondary);
+        }
+        .task-list {
+          list-style: none;
+          padding-left: 0;
+        }
+        .task-list li {
+          display: flex;
+          align-items: flex-start;
+          gap: 0.65rem;
+        }
+        .task-list input {
+          margin-top: 0.22rem;
+        }
+        hr {
+          border: 0;
+          border-top: 1px solid var(--border);
+          margin: 1.4rem 0;
+        }
+        </style>
+        </head>
+        <body>
+        \(body)
+        </body>
+        </html>
+        """
+    }
+
+    private static func parseHeading(_ line: String) -> String? {
+        let hashes = line.prefix { $0 == "#" }
         let level = hashes.count
-        guard (1...6).contains(level), trimmed.dropFirst(level).first == " " else {
+        guard (1...6).contains(level), line.dropFirst(level).first == " " else {
             return nil
         }
 
-        return .heading(level: level, text: trimmed.dropFirst(level + 1).description)
+        let text = String(line.dropFirst(level + 1))
+        return "<h\(level)>\(renderInline(text))</h\(level)>"
     }
 
-    private func parseImage(from trimmed: String) -> MarkdownBlock? {
-        guard trimmed.hasPrefix("!["),
-              let altClose = trimmed.firstIndex(of: "]"),
-              let openParen = trimmed.firstIndex(of: "("),
-              let closeParen = trimmed.lastIndex(of: ")"),
-              altClose < openParen,
-              openParen < closeParen else {
-            return nil
-        }
-
-        let alt = String(trimmed[trimmed.index(trimmed.startIndex, offsetBy: 2)..<altClose])
-        let source = String(trimmed[trimmed.index(after: openParen)..<closeParen])
-        return .image(alt: alt, source: source)
+    private static func fencedCodeDelimiter(in line: String) -> String? {
+        if line.hasPrefix("```") { return "```" }
+        if line.hasPrefix("~~~") { return "~~~" }
+        return nil
     }
 
-    private mutating func parseCodeBlock() -> MarkdownBlock {
+    private static func parseCodeBlock(lines: [String], index: inout Int, fence: String) -> String {
         let openingLine = lines[index].trimmingCharacters(in: .whitespaces)
-        let language = openingLine.dropFirst(3).trimmingCharacters(in: .whitespacesAndNewlines)
+        let language = openingLine.dropFirst(fence.count).trimmingCharacters(in: .whitespacesAndNewlines)
         index += 1
 
         var codeLines: [String] = []
         while index < lines.count {
             let line = lines[index]
-            if line.trimmingCharacters(in: .whitespaces) == "```" {
+            if line.trimmingCharacters(in: .whitespaces) == fence {
                 index += 1
                 break
             }
@@ -276,104 +404,261 @@ private struct MarkdownDocumentParser {
             index += 1
         }
 
-        return .codeBlock(language: language.isEmpty ? nil : language, code: codeLines.joined(separator: "\n"))
+        let languageClass = language.isEmpty ? "" : " class=\"language-\(escapeAttribute(language))\""
+        return "<pre><code\(languageClass)>\(escapeHTML(codeLines.joined(separator: "\n")))</code></pre>"
     }
 
-    private mutating func parseQuote() -> MarkdownBlock {
-        var parts: [String] = []
+    private static func parseParagraph(lines: [String], index: inout Int) -> String {
+        var paragraphLines: [String] = []
+
+        while index < lines.count {
+            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty ||
+                fencedCodeDelimiter(in: trimmed) != nil ||
+                parseHeading(trimmed) != nil ||
+                isHorizontalRule(trimmed) ||
+                isTableHeader(lines: lines, index: index) ||
+                isListLine(trimmed) ||
+                trimmed.hasPrefix(">") {
+                break
+            }
+
+            paragraphLines.append(trimmed)
+            index += 1
+        }
+
+        return "<p>\(renderInline(paragraphLines.joined(separator: " ")))</p>"
+    }
+
+    private static func parseBlockquote(lines: [String], index: inout Int) -> String {
+        var quoteLines: [String] = []
+
         while index < lines.count {
             let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
             guard trimmed.hasPrefix(">") else { break }
-            parts.append(trimmed.dropFirst().trimmingCharacters(in: .whitespaces))
+            let content = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
+            quoteLines.append(content)
             index += 1
         }
-        return .quote(parts.joined(separator: " "))
+
+        let innerHTML = render(markdown: quoteLines.joined(separator: "\n"))
+        return "<blockquote>\(innerHTML)</blockquote>"
     }
 
-    private mutating func parseChecklist() -> MarkdownBlock {
-        var items: [ChecklistItem] = []
-        while index < lines.count {
-            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
-            guard isChecklistLine(trimmed) else { break }
-            let isChecked = trimmed.lowercased().hasPrefix("- [x]") || trimmed.lowercased().hasPrefix("* [x]")
-            let text = trimmed.dropFirst(6).trimmingCharacters(in: .whitespaces)
-            items.append(ChecklistItem(text: text, isChecked: isChecked))
-            index += 1
-        }
-        return .checklist(items)
-    }
-
-    private mutating func parseBulletList() -> MarkdownBlock {
+    private static func parseList(lines: [String], index: inout Int) -> String {
+        let firstTrimmed = lines[index].trimmingCharacters(in: .whitespaces)
+        let ordered = isOrderedListLine(firstTrimmed)
+        let taskList = isChecklistLine(firstTrimmed)
         var items: [String] = []
+
         while index < lines.count {
             let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
-            guard isBulletLine(trimmed), !isChecklistLine(trimmed) else { break }
-            items.append(trimmed.dropFirst(2).trimmingCharacters(in: .whitespaces))
+            guard isListLine(trimmed) else { break }
+            guard isOrderedListLine(trimmed) == ordered || (!ordered && !isOrderedListLine(trimmed)) else { break }
+
+            if taskList, isChecklistLine(trimmed) {
+                let isChecked = trimmed.lowercased().hasPrefix("- [x]") || trimmed.lowercased().hasPrefix("* [x]")
+                let itemText = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+                let checkbox = "<input type=\"checkbox\" disabled\(isChecked ? " checked" : "")>"
+                items.append("<li>\(checkbox)<span>\(renderInline(itemText))</span></li>")
+                index += 1
+                continue
+            }
+
+            if ordered {
+                let content = trimmed.replacingOccurrences(
+                    of: #"^\d+\.\s+"#,
+                    with: "",
+                    options: .regularExpression
+                )
+                items.append("<li>\(renderInline(content))</li>")
+            } else {
+                let content = String(trimmed.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+                items.append("<li>\(renderInline(content))</li>")
+            }
             index += 1
         }
-        return .bulletList(items)
+
+        if taskList {
+            return "<ul class=\"task-list\">\(items.joined())</ul>"
+        }
+
+        let tag = ordered ? "ol" : "ul"
+        return "<\(tag)>\(items.joined())</\(tag)>"
     }
 
-    private mutating func parseTable() -> MarkdownBlock {
+    private static func parseTable(lines: [String], index: inout Int) -> String {
         let headers = splitTableRow(lines[index])
         index += 2
 
         var rows: [[String]] = []
         while index < lines.count {
             let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
-            guard trimmed.contains("|"), !trimmed.isEmpty else { break }
+            guard !trimmed.isEmpty, trimmed.contains("|") else { break }
             rows.append(splitTableRow(lines[index]))
             index += 1
         }
 
-        return .table(headers: headers, rows: rows)
+        let headHTML = headers.map { "<th>\(renderInline($0))</th>" }.joined()
+        let rowHTML = rows.map { row in
+            "<tr>\(row.map { "<td>\(renderInline($0))</td>" }.joined())</tr>"
+        }.joined()
+
+        return "<table><thead><tr>\(headHTML)</tr></thead><tbody>\(rowHTML)</tbody></table>"
     }
 
-    private mutating func parseParagraph() -> MarkdownBlock {
-        var parts: [String] = []
-
-        while index < lines.count {
-            let line = lines[index]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty ||
-                trimmed.hasPrefix("```") ||
-                parseHeading(from: trimmed) != nil ||
-                parseImage(from: trimmed) != nil ||
-                trimmed.hasPrefix(">") ||
-                isChecklistLine(trimmed) ||
-                isBulletLine(trimmed) ||
-                isTableHeader(at: index) {
-                break
-            }
-
-            parts.append(trimmed)
-            index += 1
-        }
-
-        return .paragraph(parts.joined(separator: " "))
+    private static func isHorizontalRule(_ line: String) -> Bool {
+        line.range(of: #"^([-*_])(\s*\1){2,}\s*$"#, options: .regularExpression) != nil
     }
 
-    private func isChecklistLine(_ line: String) -> Bool {
+    private static func isListLine(_ line: String) -> Bool {
+        isChecklistLine(line) || isUnorderedListLine(line) || isOrderedListLine(line)
+    }
+
+    private static func isChecklistLine(_ line: String) -> Bool {
         let lowercased = line.lowercased()
-        return lowercased.hasPrefix("- [ ] ") || lowercased.hasPrefix("- [x] ") || lowercased.hasPrefix("* [ ] ") || lowercased.hasPrefix("* [x] ")
+        return lowercased.hasPrefix("- [ ] ") || lowercased.hasPrefix("- [x] ") ||
+            lowercased.hasPrefix("* [ ] ") || lowercased.hasPrefix("* [x] ")
     }
 
-    private func isBulletLine(_ line: String) -> Bool {
+    private static func isUnorderedListLine(_ line: String) -> Bool {
         line.hasPrefix("- ") || line.hasPrefix("* ")
     }
 
-    private func isTableHeader(at index: Int) -> Bool {
+    private static func isOrderedListLine(_ line: String) -> Bool {
+        line.range(of: #"^\d+\.\s+"#, options: .regularExpression) != nil
+    }
+
+    private static func isTableHeader(lines: [String], index: Int) -> Bool {
         guard index + 1 < lines.count else { return false }
         let header = lines[index].trimmingCharacters(in: .whitespaces)
         let separator = lines[index + 1].trimmingCharacters(in: .whitespaces)
-        return header.contains("|") && separator.replacingOccurrences(of: "|", with: "").allSatisfy { $0 == "-" || $0 == ":" || $0 == " " }
+        guard header.contains("|") else { return false }
+        return separator.replacingOccurrences(of: "|", with: "").allSatisfy { $0 == "-" || $0 == ":" || $0 == " " }
     }
 
-    private func splitTableRow(_ line: String) -> [String] {
+    private static func splitTableRow(_ line: String) -> [String] {
         line
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "|"))
             .components(separatedBy: "|")
             .map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    private static func renderInline(_ text: String) -> String {
+        var placeholders: [String: String] = [:]
+        var placeholderIndex = 0
+        var working = text
+
+        func replace(_ pattern: String, transform: ([String]) -> String) {
+            let regex = try? NSRegularExpression(pattern: pattern, options: [])
+            guard let regex else { return }
+
+            while let match = regex.firstMatch(in: working, range: NSRange(working.startIndex..., in: working)) {
+                let parts = (0..<match.numberOfRanges).compactMap { groupIndex -> String? in
+                    guard let range = Range(match.range(at: groupIndex), in: working) else { return nil }
+                    return String(working[range])
+                }
+                let placeholder = "@@MD\(placeholderIndex)@@"
+                placeholderIndex += 1
+                placeholders[placeholder] = transform(parts)
+                if let range = Range(match.range(at: 0), in: working) {
+                    working.replaceSubrange(range, with: placeholder)
+                }
+            }
+        }
+
+        replace(#"!\[([^\]]*)\]\(([^)]+)\)"#) { parts in
+            let alt = parts.count > 1 ? parts[1] : ""
+            let source = parts.count > 2 ? parts[2] : ""
+            if let video = youtubeThumbnailMarkup(alt: alt, source: source) {
+                return video
+            }
+            let caption = alt.isEmpty ? "" : "<figcaption>\(escapeHTML(alt))</figcaption>"
+            return "<figure class=\"md-image\"><img src=\"\(escapeAttribute(source))\" alt=\"\(escapeAttribute(alt))\" loading=\"lazy\">\(caption)</figure>"
+        }
+
+        replace(#"\[([^\]]+)\]\(([^)]+)\)"#) { parts in
+            let label = parts.count > 1 ? renderInline(parts[1]) : ""
+            let target = parts.count > 2 ? parts[2] : ""
+            return "<a href=\"\(escapeAttribute(target))\">\(label)</a>"
+        }
+
+        replace(#"`([^`]+)`"#) { parts in
+            let code = parts.count > 1 ? parts[1] : ""
+            return "<code>\(escapeHTML(code))</code>"
+        }
+
+        working = escapeHTML(working)
+        working = working.replacingOccurrences(of: #"(?s)\*\*(.+?)\*\*"#, with: "<strong>$1</strong>", options: .regularExpression)
+        working = working.replacingOccurrences(of: #"(?s)__(.+?)__"#, with: "<strong>$1</strong>", options: .regularExpression)
+        working = working.replacingOccurrences(of: #"(?s)\*(.+?)\*"#, with: "<em>$1</em>", options: .regularExpression)
+        working = working.replacingOccurrences(of: #"(?s)_(.+?)_"#, with: "<em>$1</em>", options: .regularExpression)
+        working = working.replacingOccurrences(of: #"(?s)~~(.+?)~~"#, with: "<del>$1</del>", options: .regularExpression)
+
+        for placeholder in placeholders.keys.sorted(by: { $0.count > $1.count }) {
+            if let replacement = placeholders[placeholder] {
+                working = working.replacingOccurrences(of: escapeHTML(placeholder), with: replacement)
+            }
+        }
+
+        return working
+    }
+
+    private static func escapeHTML(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    private static func escapeAttribute(_ text: String) -> String {
+        escapeHTML(text).replacingOccurrences(of: "'", with: "&#39;")
+    }
+
+    private static func youtubeThumbnailMarkup(alt: String, source: String) -> String? {
+        guard let url = URL(string: source),
+              let videoID = youtubeVideoID(from: url) else {
+            return nil
+        }
+
+        let watchURL = "https://www.youtube.com/watch?v=\(videoID)"
+        let thumbnailURL = "https://i.ytimg.com/vi/\(videoID)/hqdefault.jpg"
+        let caption = alt.isEmpty ? "YouTube video" : alt
+
+        return """
+        <figure class="md-image"><a class="md-video-thumb" href="\(watchURL)"><img src="\(thumbnailURL)" alt="\(escapeAttribute(caption))" loading="lazy"><span class="md-play-badge">▶</span></a><figcaption>\(escapeHTML(caption))</figcaption></figure>
+        """
+    }
+
+    private static func youtubeVideoID(from url: URL) -> String? {
+        guard let host = url.host?.lowercased() else { return nil }
+
+        if host.contains("youtube.com") {
+            let pathComponents = url.pathComponents.filter { $0 != "/" }
+            if let embedIndex = pathComponents.firstIndex(of: "embed"), embedIndex + 1 < pathComponents.count {
+                return normalizedYouTubeVideoID(pathComponents[embedIndex + 1])
+            }
+
+            if url.path == "/watch",
+               let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+               let value = components.queryItems?.first(where: { $0.name == "v" })?.value {
+                return normalizedYouTubeVideoID(value)
+            }
+        }
+
+        if host == "youtu.be" {
+            return normalizedYouTubeVideoID(url.lastPathComponent)
+        }
+
+        return nil
+    }
+
+    private static func normalizedYouTubeVideoID(_ rawValue: String) -> String? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let cleaned = trimmed.replacingOccurrences(of: #"[^A-Za-z0-9_-]"#, with: "", options: .regularExpression)
+        return cleaned.isEmpty ? nil : cleaned
     }
 }
