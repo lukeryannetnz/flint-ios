@@ -118,6 +118,43 @@ The system SHALL autosave note edits shortly after the user stops typing.
 - THEN Flint writes the current editor text to the selected note file
 - AND unsaved state is cleared
 
+#### Scenario: Save when inline editing ends
+
+- GIVEN a note is open in rendered document mode
+- AND the user has entered inline editing from the rendered document
+- WHEN the editor loses focus because the keyboard is dismissed
+- THEN Flint writes the current editor text to the selected note file immediately
+- AND unsaved state is cleared
+- AND Flint returns to the rendered document view
+
+### Requirement: Inline editing from the rendered document
+
+The system SHALL let the user begin editing directly from the rendered markdown document without navigating to a separate editor screen.
+
+#### Scenario: Tap rendered document to edit in place
+
+- GIVEN a note is open in rendered document mode
+- WHEN the user taps within the rendered document surface
+- THEN Flint replaces the rendered document with an inline editor in the same document area
+- AND the inline editor is focused so the keyboard is shown
+- AND the inline editor preserves the rendered document width and visual frame within the viewport
+- AND the current note text remains the editing source of truth
+
+#### Scenario: Activate a link from the rendered document
+
+- GIVEN a note is open in rendered document mode
+- AND the rendered document contains a link
+- WHEN the user taps that link
+- THEN Flint opens the link target
+- AND Flint does not enter inline editing for that tap
+
+#### Scenario: Show formatting controls while inline editing
+
+- GIVEN a note has entered inline editing from the rendered document
+- WHEN the keyboard is shown
+- THEN Flint shows markdown editing controls alongside the keyboard
+- AND the document content area continues to match the rendered document frame
+
 ### Requirement: Save status in the editor
 
 The system SHALL communicate whether the current note still has pending edits.

@@ -333,6 +333,9 @@ private struct NoteDocumentView: View {
     @Binding var isInlineEditing: Bool
     let hasUnsavedChanges: Bool
     let onSave: () -> Void
+    @State private var didAppearForCurrentNote = false
+    @State private var inlineEditorHeight: CGFloat = 420
+    @State private var isMarkdownEditorFocused = false
 
     private var document: MarkdownDocument {
         MarkdownDocument(noteTitle: note.title, markdown: text)
@@ -359,44 +362,54 @@ private struct NoteDocumentView: View {
                                 Text(note.relativePath)
                                 Text(note.lastEditedDisplayText)
                                 Spacer()
-                                if !isInlineEditing {
-                                    DocumentModeMenu(presentationMode: $presentationMode)
+                                DocumentModeMenu(presentationMode: $presentationMode)
+                                if isInlineEditing {
+                                    Button {
+                                        isMarkdownEditorFocused = false
+                                    } label: {
+                                        Image(systemName: "keyboard.chevron.compact.down")
+                                            .font(.caption.weight(.semibold))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(.secondary)
                                 }
                             }
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                         }
 
-                        if presentationMode == .markdown || isInlineEditing {
+                        if isInlineEditing {
+                            InlineMarkdownEditor(
+                                text: $text,
+                                isEditing: $isInlineEditing,
+                                measuredHeight: $inlineEditorHeight,
+                                isFocused: $isMarkdownEditorFocused
+                            ) {
+                                handleInlineEditingEnded()
+                            }
+                                .id("editor-\(note.url.path)")
+                                .frame(maxWidth: .infinity, minHeight: inlineEditorHeight, alignment: .topLeading)
+                                .background(documentSurface)
+                        } else if presentationMode == .markdown {
                             TextEditor(text: $text)
                                 .id("editor-\(note.url.path)")
                                 .font(.system(size: 17, weight: .regular, design: .default))
                                 .frame(minHeight: 420)
                                 .padding(18)
                                 .background(documentSurface)
-                                .overlay(alignment: .topTrailing) {
-                                    if isInlineEditing {
-                                        Button("Done") {
-                                            withAnimation(.easeInOut(duration: 0.2)) {
-                                                isInlineEditing = false
-                                            }
-                                        }
-                                        .padding(14)
-                                    }
-                                }
                         } else {
                             MarkdownDocumentView(
                                 document: document,
                                 noteURL: note.url,
-                                vaultURL: vaultURL
-                            )
-                                .id("rendered-\(note.url.path)")
-                                .contentShape(Rectangle())
-                                .onTapGesture {
+                                vaultURL: vaultURL,
+                                onTapDocument: {
                                     withAnimation(.easeInOut(duration: 0.2)) {
                                         isInlineEditing = true
+                                        isMarkdownEditorFocused = true
                                     }
                                 }
+                            )
+                                .id("rendered-\(note.url.path)")
                                 .padding(22)
                                 .background(documentSurface)
                         }
@@ -407,9 +420,13 @@ private struct NoteDocumentView: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: note.url) { _, _ in
+                    didAppearForCurrentNote = false
+                    inlineEditorHeight = 420
+                    isMarkdownEditorFocused = false
                     proxy.scrollTo("note-top", anchor: .top)
                 }
                 .onAppear {
+                    didAppearForCurrentNote = true
                     proxy.scrollTo("note-top", anchor: .top)
                 }
             }
@@ -439,6 +456,17 @@ private struct NoteDocumentView: View {
 
     private var documentSurface: some ShapeStyle {
         Color(uiColor: .secondarySystemBackground)
+    }
+
+    private func handleInlineEditingEnded() {
+        guard didAppearForCurrentNote, presentationMode != .markdown, isInlineEditing else { return }
+
+        isMarkdownEditorFocused = false
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isInlineEditing = false
+        }
+
+        onSave()
     }
 }
 
@@ -591,6 +619,7 @@ private struct MarkdownDocumentView: View {
     let document: MarkdownDocument
     let noteURL: URL
     let vaultURL: URL?
+    let onTapDocument: () -> Void
     @State private var contentHeight: CGFloat = 1
 
     var body: some View {
@@ -598,6 +627,7 @@ private struct MarkdownDocumentView: View {
             html: document.html,
             noteURL: noteURL,
             vaultURL: vaultURL,
+            onTapDocument: onTapDocument,
             contentHeight: $contentHeight
         )
         .frame(height: max(contentHeight, 1))
@@ -605,19 +635,270 @@ private struct MarkdownDocumentView: View {
     }
 }
 
+private struct InlineMarkdownEditor: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var isEditing: Bool
+    @Binding var measuredHeight: CGFloat
+    @Binding var isFocused: Bool
+    let onEndEditing: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            text: $text,
+            isEditing: $isEditing,
+            measuredHeight: $measuredHeight,
+            isFocused: $isFocused,
+            onEndEditing: onEndEditing
+        )
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.delegate = context.coordinator
+        textView.backgroundColor = .clear
+        textView.adjustsFontForContentSizeCategory = true
+        textView.alwaysBounceVertical = false
+        textView.autocapitalizationType = .sentences
+        textView.autocorrectionType = .yes
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.isScrollEnabled = false
+        textView.keyboardDismissMode = .interactive
+        textView.textAlignment = .natural
+        textView.textContainer.widthTracksTextView = true
+        textView.textContainer.lineBreakMode = .byWordWrapping
+        textView.showsHorizontalScrollIndicator = false
+        textView.smartDashesType = .yes
+        textView.smartQuotesType = .yes
+        textView.smartInsertDeleteType = .yes
+        textView.textContainerInset = UIEdgeInsets(top: 22, left: 22, bottom: 22, right: 22)
+        textView.textContainer.lineFragmentPadding = 0
+        textView.inputAccessoryView = context.coordinator.makeAccessoryToolbar(for: textView)
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return textView
+    }
+
+    func updateUIView(_ textView: UITextView, context: Context) {
+        context.coordinator.onEndEditing = onEndEditing
+
+        if textView.text != text {
+            textView.text = text
+        }
+
+        if isEditing, isFocused, textView.window != nil, !textView.isFirstResponder {
+            DispatchQueue.main.async {
+                guard isEditing, isFocused, textView.window != nil, !textView.isFirstResponder else { return }
+                textView.becomeFirstResponder()
+            }
+        } else if (!isEditing || !isFocused), textView.isFirstResponder {
+            textView.resignFirstResponder()
+        }
+
+        context.coordinator.updateMeasuredHeight(for: textView)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? uiView.bounds.width
+        guard width > 0 else { return nil }
+        return CGSize(width: width, height: max(measuredHeight, 420))
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        @Binding var text: String
+        @Binding var isEditing: Bool
+        @Binding var measuredHeight: CGFloat
+        @Binding var isFocused: Bool
+        var onEndEditing: () -> Void
+        weak var textView: UITextView?
+
+        init(
+            text: Binding<String>,
+            isEditing: Binding<Bool>,
+            measuredHeight: Binding<CGFloat>,
+            isFocused: Binding<Bool>,
+            onEndEditing: @escaping () -> Void
+        ) {
+            _text = text
+            _isEditing = isEditing
+            _measuredHeight = measuredHeight
+            _isFocused = isFocused
+            self.onEndEditing = onEndEditing
+        }
+
+        func makeAccessoryToolbar(for textView: UITextView) -> UIToolbar {
+            self.textView = textView
+
+            let toolbar = UIToolbar()
+            toolbar.items = [
+                UIBarButtonItem(title: "H1", style: .plain, target: self, action: #selector(insertHeading)),
+                UIBarButtonItem(title: "B", style: .plain, target: self, action: #selector(insertBold)),
+                UIBarButtonItem(title: "I", style: .plain, target: self, action: #selector(insertItalic)),
+                UIBarButtonItem(title: "`", style: .plain, target: self, action: #selector(insertInlineCode)),
+                UIBarButtonItem(title: "Link", style: .plain, target: self, action: #selector(insertLink)),
+                UIBarButtonItem(title: "Task", style: .plain, target: self, action: #selector(insertChecklist)),
+                UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil),
+                UIBarButtonItem(
+                    image: UIImage(systemName: "keyboard.chevron.compact.down"),
+                    style: .done,
+                    target: self,
+                    action: #selector(dismissKeyboard)
+                )
+            ]
+            toolbar.sizeToFit()
+            return toolbar
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            self.textView = textView
+            text = textView.text
+            updateMeasuredHeight(for: textView)
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            self.textView = textView
+            if !isEditing {
+                isEditing = true
+            }
+            if !isFocused {
+                isFocused = true
+            }
+            updateMeasuredHeight(for: textView)
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            self.textView = textView
+            text = textView.text
+            updateMeasuredHeight(for: textView)
+            if isFocused {
+                isFocused = false
+            }
+            if isEditing {
+                isEditing = false
+            }
+            onEndEditing()
+        }
+
+        func updateMeasuredHeight(for textView: UITextView) {
+            let targetWidth = textView.bounds.width > 0
+                ? textView.bounds.width
+                : UIScreen.main.bounds.width - 88
+            guard targetWidth > 0 else { return }
+
+            let fittingSize = textView.sizeThatFits(
+                CGSize(width: targetWidth, height: .greatestFiniteMagnitude)
+            )
+            let nextHeight = max(fittingSize.height, 420)
+
+            if abs(measuredHeight - nextHeight) > 0.5 {
+                DispatchQueue.main.async {
+                    self.measuredHeight = nextHeight
+                }
+            }
+        }
+
+        @objc
+        private func insertHeading() {
+            toggleLinePrefix("# ")
+        }
+
+        @objc
+        private func insertBold() {
+            wrapSelection(prefix: "**", suffix: "**", placeholder: "bold")
+        }
+
+        @objc
+        private func insertItalic() {
+            wrapSelection(prefix: "*", suffix: "*", placeholder: "italic")
+        }
+
+        @objc
+        private func insertInlineCode() {
+            wrapSelection(prefix: "`", suffix: "`", placeholder: "code")
+        }
+
+        @objc
+        private func insertLink() {
+            wrapSelection(prefix: "[", suffix: "](https://)", placeholder: "title")
+        }
+
+        @objc
+        private func insertChecklist() {
+            toggleLinePrefix("- [ ] ")
+        }
+
+        @objc
+        private func dismissKeyboard() {
+            isFocused = false
+            textView?.resignFirstResponder()
+        }
+
+        private func wrapSelection(prefix: String, suffix: String, placeholder: String) {
+            guard let textView else { return }
+
+            let currentText = textView.text ?? ""
+            let selectedRange = textView.selectedRange
+            guard let range = Range(selectedRange, in: currentText) else { return }
+
+            let selectedText = currentText[range]
+            let replacementBody = selectedText.isEmpty ? placeholder : String(selectedText)
+            let replacement = prefix + replacementBody + suffix
+            let updatedText = currentText.replacingCharacters(in: range, with: replacement)
+
+            textView.text = updatedText
+            let cursorLocation = selectedRange.location + prefix.count + replacementBody.count
+            textView.selectedRange = NSRange(location: cursorLocation, length: 0)
+            text = updatedText
+            textViewDidChange(textView)
+        }
+
+        private func toggleLinePrefix(_ prefix: String) {
+            guard let textView else { return }
+
+            let currentText = textView.text ?? ""
+            let selectedRange = textView.selectedRange
+            let nsText = currentText as NSString
+            let safeRange = NSRange(
+                location: min(selectedRange.location, nsText.length),
+                length: min(selectedRange.length, max(nsText.length - min(selectedRange.location, nsText.length), 0))
+            )
+            let lineRange = nsText.lineRange(for: safeRange)
+            let lineText = nsText.substring(with: lineRange)
+            let updatedLine: String
+
+            if lineText.hasPrefix(prefix) {
+                updatedLine = String(lineText.dropFirst(prefix.count))
+            } else {
+                updatedLine = prefix + lineText
+            }
+
+            let updatedText = nsText.replacingCharacters(in: lineRange, with: updatedLine)
+            let locationAdjustment = lineText.hasPrefix(prefix) ? -prefix.count : prefix.count
+            textView.text = updatedText
+            textView.selectedRange = NSRange(
+                location: max(selectedRange.location + locationAdjustment, 0),
+                length: selectedRange.length
+            )
+            text = updatedText
+            textViewDidChange(textView)
+        }
+    }
+}
+
 private struct MarkdownWebView: UIViewRepresentable {
     let html: String
     let noteURL: URL
     let vaultURL: URL?
+    let onTapDocument: () -> Void
     @Binding var contentHeight: CGFloat
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(contentHeight: $contentHeight)
+        Coordinator(contentHeight: $contentHeight, onTapDocument: onTapDocument)
     }
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.userContentController.add(context.coordinator, name: Coordinator.documentTapHandlerName)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -630,26 +911,54 @@ private struct MarkdownWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
+        context.coordinator.onTapDocument = onTapDocument
         let contentKey = "\(noteURL.path)|\(html)"
         guard context.coordinator.lastContentKey != contentKey else { return }
         context.coordinator.lastContentKey = contentKey
         webView.loadHTMLString(html, baseURL: vaultURL ?? noteURL.deletingLastPathComponent())
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.documentTapHandlerName)
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        static let documentTapHandlerName = "documentTap"
+
         @Binding var contentHeight: CGFloat
         var lastContentKey: String?
+        var onTapDocument: () -> Void
 
-        init(contentHeight: Binding<CGFloat>) {
+        init(contentHeight: Binding<CGFloat>, onTapDocument: @escaping () -> Void) {
             _contentHeight = contentHeight
+            self.onTapDocument = onTapDocument
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            let installTapHandler = """
+            (() => {
+              if (window.__flintDocumentTapInstalled) { return; }
+              window.__flintDocumentTapInstalled = true;
+              document.addEventListener('click', function(event) {
+                const link = event.target.closest('a');
+                if (link) { return; }
+                window.webkit.messageHandlers.\(Self.documentTapHandlerName).postMessage('tap');
+              });
+            })();
+            """
+            webView.evaluateJavaScript(installTapHandler)
             webView.evaluateJavaScript("document.documentElement.scrollHeight") { result, _ in
                 guard let height = result as? CGFloat else { return }
                 DispatchQueue.main.async {
                     self.contentHeight = height
                 }
+            }
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == Self.documentTapHandlerName else { return }
+            DispatchQueue.main.async {
+                self.onTapDocument()
             }
         }
 
