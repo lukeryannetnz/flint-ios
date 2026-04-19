@@ -23,6 +23,16 @@ Strike a spark. Keep every note in a markdown vault you own.
 - `Flint/Views/`: onboarding, folder picker bridging, and the editor shell.
 - `FlintTests/`: unit tests for the app model and file service.
 
+## OpenSpec
+
+The repository now includes checked-in OpenSpec documentation for Flint's current behavior under `openspec/`.
+
+- `openspec/specs/app-bootstrap/spec.md`: app launch, bookmark restoration, onboarding, and alert behavior
+- `openspec/specs/vault-management/spec.md`: creating and opening vaults from Files providers
+- `openspec/specs/note-management/spec.md`: note discovery, creation, editing, and autosave behavior
+
+Future changes can add proposal artifacts under `openspec/changes/` and keep `openspec/specs/` as the source of truth for current functionality.
+
 ## Signing
 
 The repo uses `Configs/Local.xcconfig` for local-only signing overrides. The example file in `Configs/Local.xcconfig.example` shows the expected key. Contributors can create their own local override without committing team-specific settings.
