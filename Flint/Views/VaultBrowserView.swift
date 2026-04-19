@@ -425,6 +425,11 @@ private struct NoteDocumentView: View {
                     isMarkdownEditorFocused = false
                     proxy.scrollTo("note-top", anchor: .top)
                 }
+                .onChange(of: presentationMode) { _, newValue in
+                    if newValue == .markdown, isInlineEditing {
+                        handleInlineEditingEnded()
+                    }
+                }
                 .onAppear {
                     didAppearForCurrentNote = true
                     proxy.scrollTo("note-top", anchor: .top)
@@ -672,7 +677,6 @@ private struct InlineMarkdownEditor: UIViewRepresentable {
         textView.smartInsertDeleteType = .yes
         textView.textContainerInset = UIEdgeInsets(top: 22, left: 22, bottom: 22, right: 22)
         textView.textContainer.lineFragmentPadding = 0
-        textView.inputAccessoryView = context.coordinator.makeAccessoryToolbar(for: textView)
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return textView
@@ -725,29 +729,6 @@ private struct InlineMarkdownEditor: UIViewRepresentable {
             self.onEndEditing = onEndEditing
         }
 
-        func makeAccessoryToolbar(for textView: UITextView) -> UIToolbar {
-            self.textView = textView
-
-            let toolbar = UIToolbar()
-            toolbar.items = [
-                UIBarButtonItem(title: "H1", style: .plain, target: self, action: #selector(insertHeading)),
-                UIBarButtonItem(title: "B", style: .plain, target: self, action: #selector(insertBold)),
-                UIBarButtonItem(title: "I", style: .plain, target: self, action: #selector(insertItalic)),
-                UIBarButtonItem(title: "`", style: .plain, target: self, action: #selector(insertInlineCode)),
-                UIBarButtonItem(title: "Link", style: .plain, target: self, action: #selector(insertLink)),
-                UIBarButtonItem(title: "Task", style: .plain, target: self, action: #selector(insertChecklist)),
-                UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil),
-                UIBarButtonItem(
-                    image: UIImage(systemName: "keyboard.chevron.compact.down"),
-                    style: .done,
-                    target: self,
-                    action: #selector(dismissKeyboard)
-                )
-            ]
-            toolbar.sizeToFit()
-            return toolbar
-        }
-
         func textViewDidChange(_ textView: UITextView) {
             self.textView = textView
             text = textView.text
@@ -794,92 +775,6 @@ private struct InlineMarkdownEditor: UIViewRepresentable {
                     self.measuredHeight = nextHeight
                 }
             }
-        }
-
-        @objc
-        private func insertHeading() {
-            toggleLinePrefix("# ")
-        }
-
-        @objc
-        private func insertBold() {
-            wrapSelection(prefix: "**", suffix: "**", placeholder: "bold")
-        }
-
-        @objc
-        private func insertItalic() {
-            wrapSelection(prefix: "*", suffix: "*", placeholder: "italic")
-        }
-
-        @objc
-        private func insertInlineCode() {
-            wrapSelection(prefix: "`", suffix: "`", placeholder: "code")
-        }
-
-        @objc
-        private func insertLink() {
-            wrapSelection(prefix: "[", suffix: "](https://)", placeholder: "title")
-        }
-
-        @objc
-        private func insertChecklist() {
-            toggleLinePrefix("- [ ] ")
-        }
-
-        @objc
-        private func dismissKeyboard() {
-            isFocused = false
-            textView?.resignFirstResponder()
-        }
-
-        private func wrapSelection(prefix: String, suffix: String, placeholder: String) {
-            guard let textView else { return }
-
-            let currentText = textView.text ?? ""
-            let selectedRange = textView.selectedRange
-            guard let range = Range(selectedRange, in: currentText) else { return }
-
-            let selectedText = currentText[range]
-            let replacementBody = selectedText.isEmpty ? placeholder : String(selectedText)
-            let replacement = prefix + replacementBody + suffix
-            let updatedText = currentText.replacingCharacters(in: range, with: replacement)
-
-            textView.text = updatedText
-            let cursorLocation = selectedRange.location + prefix.count + replacementBody.count
-            textView.selectedRange = NSRange(location: cursorLocation, length: 0)
-            text = updatedText
-            textViewDidChange(textView)
-        }
-
-        private func toggleLinePrefix(_ prefix: String) {
-            guard let textView else { return }
-
-            let currentText = textView.text ?? ""
-            let selectedRange = textView.selectedRange
-            let nsText = currentText as NSString
-            let safeRange = NSRange(
-                location: min(selectedRange.location, nsText.length),
-                length: min(selectedRange.length, max(nsText.length - min(selectedRange.location, nsText.length), 0))
-            )
-            let lineRange = nsText.lineRange(for: safeRange)
-            let lineText = nsText.substring(with: lineRange)
-            let updatedLine: String
-
-            if lineText.hasPrefix(prefix) {
-                updatedLine = String(lineText.dropFirst(prefix.count))
-            } else {
-                updatedLine = prefix + lineText
-            }
-
-            let updatedText = nsText.replacingCharacters(in: lineRange, with: updatedLine)
-            let locationAdjustment = lineText.hasPrefix(prefix) ? -prefix.count : prefix.count
-            textView.text = updatedText
-            textView.selectedRange = NSRange(
-                location: max(selectedRange.location + locationAdjustment, 0),
-                length: selectedRange.length
-            )
-            text = updatedText
-            textViewDidChange(textView)
         }
     }
 }
