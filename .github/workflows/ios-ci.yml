@@ -1,0 +1,79 @@
+name: iOS CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ios-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Select simulator
+        run: |
+          SIMULATOR_ID="$(
+            xcrun simctl list devices available -j | ruby -rjson -e '
+              devices_by_runtime = JSON.parse(STDIN.read).fetch("devices")
+              runtime_key = devices_by_runtime.keys
+                .grep(/com\.apple\.CoreSimulator\.SimRuntime\.iOS-/)
+                .max
+              abort("No iOS simulator runtime found") unless runtime_key
+
+              device = Array(devices_by_runtime[runtime_key]).find do |candidate|
+                candidate["isAvailable"] && candidate["name"].start_with?("iPhone")
+              end
+              abort("No available iPhone simulator found") unless device
+
+              puts device.fetch("udid")
+            '
+          )"
+
+          echo "CI_SIMULATOR_ID=$SIMULATOR_ID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$SIMULATOR_ID" || true
+
+      - name: Build for testing
+        run: |
+          xcodebuild \
+            -project Flint.xcodeproj \
+            -scheme Flint \
+            -sdk iphonesimulator \
+            -destination "id=$CI_SIMULATOR_ID" \
+            -derivedDataPath /tmp/flint-ci-derived-data \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build-for-testing
+
+      - name: Run tests
+        run: |
+          xcodebuild \
+            -project Flint.xcodeproj \
+            -scheme Flint \
+            -sdk iphonesimulator \
+            -destination "id=$CI_SIMULATOR_ID" \
+            -derivedDataPath /tmp/flint-ci-derived-data \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            test-without-building
