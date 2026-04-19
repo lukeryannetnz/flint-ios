@@ -15,7 +15,9 @@ The system SHALL begin in a loading state while vault restoration is attempted.
 - GIVEN the app has just launched
 - WHEN the root view appears
 - THEN the app model starts bootstrap once
-- AND the interface shows a loading state until bootstrap decides the next phase
+- AND the interface shows a full-screen loading state until bootstrap decides the next phase
+- AND the loading presentation covers the entire display without exposing default system background chrome
+- AND the loading presentation uses Flint branding rather than a bare progress indicator
 
 ### Requirement: Onboarding without a stored vault
 
