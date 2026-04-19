@@ -1,6 +1,12 @@
 import SwiftUI
 
 struct VaultBrowserView: View {
+    private enum SwipeBackBehavior {
+        static let minimumHorizontalTranslation: CGFloat = 60
+        static let minimumHorizontalPrediction: CGFloat = 120
+        static let maximumVerticalTranslation: CGFloat = 80
+    }
+
     private enum BrowserMode: String, CaseIterable, Identifiable {
         case recent
         case folders
@@ -267,6 +273,36 @@ struct VaultBrowserView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(Color(uiColor: .systemGroupedBackground))
+        .contentShape(Rectangle())
+        .simultaneousGesture(folderBackSwipeGesture)
+    }
+
+    private var folderBackSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 20, coordinateSpace: .local)
+            .onEnded { value in
+                guard shouldNavigateBackFromFolder(for: value) else { return }
+                navigateBackFromFolder()
+            }
+    }
+
+    private func shouldNavigateBackFromFolder(for value: DragGesture.Value) -> Bool {
+        guard browserMode == .folders, !folderPathComponents.isEmpty else { return false }
+
+        let horizontalTranslation = value.translation.width
+        let predictedHorizontalTranslation = value.predictedEndTranslation.width
+        let verticalTranslation = abs(value.translation.height)
+
+        guard verticalTranslation <= SwipeBackBehavior.maximumVerticalTranslation else {
+            return false
+        }
+
+        return horizontalTranslation >= SwipeBackBehavior.minimumHorizontalTranslation ||
+            predictedHorizontalTranslation >= SwipeBackBehavior.minimumHorizontalPrediction
+    }
+
+    private func navigateBackFromFolder() {
+        guard !folderPathComponents.isEmpty else { return }
+        folderPathComponents.removeLast()
     }
 }
 
