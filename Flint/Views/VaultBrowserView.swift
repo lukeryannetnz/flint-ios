@@ -983,7 +983,7 @@ private struct RichTextNoteEditor: UIViewRepresentable {
             let text = textView.attributedText.string as NSString
             let paragraphRange = text.paragraphRange(for: range)
             let style = FlintRichTextCodec.blockStyle(at: paragraphRange.location, in: textView.attributedText)
-            let paragraphText = text.substring(with: NSRange(location: paragraphRange.location, length: max(0, paragraphRange.length - (text.substring(with: NSRange(location: paragraphRange.location + paragraphRange.length - 1, length: 1)) == "\n" ? 1 : 0))))
+            let paragraphText = FlintRichTextCodec.paragraphText(in: text, paragraphRange: paragraphRange)
             let visibleContent = FlintRichTextCodec.visibleContent(for: paragraphText, style: style)
 
             switch style {

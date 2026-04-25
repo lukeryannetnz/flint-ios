@@ -235,6 +235,13 @@ The system SHALL provide predictable list, paragraph splitting, and insertion be
 - THEN Flint splits the block at the insertion point
 - AND the new paragraph inherits the appropriate follow-on style for that block type
 
+#### Scenario: Insert the first newline into an empty note
+
+- GIVEN the selected note is empty
+- WHEN the user presses return at the start of the rich text editor
+- THEN Flint inserts a new empty body paragraph without crashing
+- AND the editor remains responsive for continued typing
+
 ### Requirement: Empty state and placeholder behavior
 
 The system SHALL provide a clear writing affordance when a note has no visible content.
@@ -269,6 +276,27 @@ The system SHALL continue storing notes as markdown files while keeping that rep
 - THEN Flint serializes the rich text document into markdown compatible with the vault file
 - AND Flint does not expose that markdown serialization in the main editing UI
 
+#### Scenario: Preserve literal fenced code block text
+
+- GIVEN a note contains a fenced code block
+- WHEN Flint loads and later saves that note through the rich text editor
+- THEN text inside the fenced code block remains literal code content
+- AND Flint does not reinterpret inline markdown markers inside that code block as emphasis or links
+
+#### Scenario: Preserve escaped markdown punctuation
+
+- GIVEN a note contains literal markdown punctuation escaped for storage
+- WHEN Flint loads and later saves that note through the rich text editor
+- THEN the user sees the literal punctuation in the writing surface without added backslashes
+- AND Flint preserves the stored escaped representation across save and reopen cycles
+
+#### Scenario: Reformat multiple paragraphs without corrupting adjacent content
+
+- GIVEN the user applies a block style across multiple paragraphs
+- WHEN Flint rewrites those paragraphs into the selected block style
+- THEN Flint reformats each targeted paragraph in sequence using the current document state
+- AND Flint does not misalign or corrupt adjacent paragraphs because of stale source indices
+
 ### Requirement: Save status in the editor
 
 The system SHALL communicate whether the current note still has pending edits.
@@ -278,11 +306,11 @@ The system SHALL communicate whether the current note still has pending edits.
 - GIVEN the current note has unsaved changes
 - WHEN the editor is shown
 - THEN the status area displays `Autosaving…`
-- AND the Save button is enabled
+- AND Flint does not show a manual save button in that status area
 
 #### Scenario: Note is fully saved
 
 - GIVEN the current note has no unsaved changes
 - WHEN the editor is shown
 - THEN the status area displays `Saved`
-- AND the Save button is disabled
+- AND Flint does not show a manual save button in that status area

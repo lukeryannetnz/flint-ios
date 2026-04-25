@@ -96,6 +96,13 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(FlintRichTextCodec.blockStyle(at: codeRange.location, in: attributed), .codeBlock)
     }
 
+    func testRichTextCodecReturnsEmptyParagraphTextForEmptyRange() {
+        XCTAssertEqual(
+            FlintRichTextCodec.paragraphText(in: NSString(string: ""), paragraphRange: NSRange(location: 0, length: 0)),
+            ""
+        )
+    }
+
     func testRichTextCodecSerializesFormattingBackToMarkdown() {
         let markdown = """
         ## Sprint Plan
@@ -162,6 +169,57 @@ final class AppModelTests: XCTestCase {
         )
         XCTAssertTrue(emphasisState.isBold)
         XCTAssertTrue(emphasisState.isItalic)
+    }
+
+    func testRichTextCodecAppliesBlockStyleAcrossMultipleParagraphsWithoutCorruptingAdjacentContent() {
+        let markdown = """
+        - one
+        - two
+
+        > keep me
+        """
+
+        let attributed = FlintRichTextCodec.attributedString(from: markdown)
+        let string = attributed.string as NSString
+        let secondRange = string.range(of: "•\ttwo")
+        let paragraphRange = string.paragraphRange(for: NSRange(location: 0, length: NSMaxRange(secondRange)))
+
+        FlintRichTextCodec.applyBlockStyle(.body, to: attributed, paragraphRange: paragraphRange)
+
+        XCTAssertEqual(FlintRichTextCodec.markdown(from: attributed), "one\ntwo\n\n> keep me")
+
+        let updatedString = attributed.string as NSString
+        let quoteRange = updatedString.range(of: "keep me")
+        XCTAssertEqual(FlintRichTextCodec.blockStyle(at: quoteRange.location, in: attributed), .quote)
+    }
+
+    func testRichTextCodecPreservesLiteralContentInsideFencedCodeBlocks() {
+        let markdown = """
+        ```
+        *ptr* [x](y)
+        ```
+        """
+
+        let attributed = FlintRichTextCodec.attributedString(from: markdown)
+        let string = attributed.string as NSString
+        let codeRange = string.range(of: "*ptr* [x](y)")
+
+        XCTAssertNotEqual(codeRange.location, NSNotFound)
+        XCTAssertNil(attributed.attribute(.link, at: codeRange.location, effectiveRange: nil))
+        XCTAssertNil(attributed.attribute(.flintBold, at: codeRange.location, effectiveRange: nil))
+        XCTAssertNil(attributed.attribute(.flintItalic, at: codeRange.location, effectiveRange: nil))
+        XCTAssertEqual(FlintRichTextCodec.markdown(from: attributed), markdown)
+    }
+
+    func testRichTextCodecRoundTripsEscapedLiteralMarkdownPunctuation() {
+        let markdown = #"""
+        Literal \*asterisk\*, \_underscore\_, \[brackets\], \\ slash, and \`tick\`
+        """#
+
+        let attributed = FlintRichTextCodec.attributedString(from: markdown)
+
+        XCTAssertEqual(attributed.string, #"Literal *asterisk*, _underscore_, [brackets], \ slash, and `tick`"#)
+        XCTAssertEqual(FlintRichTextCodec.markdown(from: attributed), markdown)
     }
 
     func testVaultFolderBuildsNestedTreeFromNotes() {

@@ -153,6 +153,7 @@ extension NSAttributedString.Key {
 
 enum FlintRichTextCodec {
     private static let bulletPrefix = "\u{2022}\t"
+    private static let escapableMarkdownCharacters: Set<Character> = ["\\", "*", "_", "[", "]", "`"]
 
     static func attributedString(from markdown: String) -> NSMutableAttributedString {
         let normalized = markdown.replacingOccurrences(of: "\r\n", with: "\n")
@@ -284,6 +285,24 @@ enum FlintRichTextCodec {
         return String(paragraphText.dropFirst(prefix.count))
     }
 
+    static func paragraphText(in text: NSString, paragraphRange: NSRange) -> String {
+        guard paragraphRange.location != NSNotFound,
+              paragraphRange.length > 0,
+              paragraphRange.location < text.length else {
+            return ""
+        }
+
+        let paragraphEnd = paragraphRange.location + paragraphRange.length
+        guard paragraphEnd <= text.length else { return "" }
+
+        let trailingCharacterRange = NSRange(location: paragraphEnd - 1, length: 1)
+        let hasTrailingNewline = text.substring(with: trailingCharacterRange) == "\n"
+        let contentLength = paragraphRange.length - (hasTrailingNewline ? 1 : 0)
+        guard contentLength > 0 else { return "" }
+
+        return text.substring(with: NSRange(location: paragraphRange.location, length: contentLength))
+    }
+
     static func blockStyle(at location: Int, in attributedString: NSAttributedString) -> FlintBlockStyle {
         blockStyle(from: safeAttributes(at: location, in: attributedString))
     }
@@ -297,23 +316,26 @@ enum FlintRichTextCodec {
     }
 
     static func applyBlockStyle(_ style: FlintBlockStyle, to attributedString: NSMutableAttributedString, paragraphRange: NSRange) {
-        let text = attributedString.string as NSString
         var cursor = paragraphRange.location
-        let end = NSMaxRange(paragraphRange)
+        var end = NSMaxRange(paragraphRange)
         var numberedIndex = 1
 
-        while cursor < end {
-            let currentParagraphRange = text.paragraphRange(for: NSRange(location: cursor, length: 0))
-            let paragraphText = text.substring(with: currentParagraphRange)
-            let content = visibleContent(for: paragraphText.replacingOccurrences(of: "\n", with: ""), style: blockStyle(at: currentParagraphRange.location, in: attributedString))
+        while cursor < end, cursor <= attributedString.length {
+            let text = attributedString.string as NSString
+            guard text.length > 0 else { break }
+
+            let safeLocation = min(cursor, max(text.length - 1, 0))
+            let currentParagraphRange = text.paragraphRange(for: NSRange(location: safeLocation, length: 0))
+            let paragraphText = paragraphText(in: text, paragraphRange: currentParagraphRange)
+            let content = visibleContent(for: paragraphText, style: blockStyle(at: currentParagraphRange.location, in: attributedString))
             let replacement = replacementText(for: content, style: style, numberedIndex: numberedIndex)
             let replacementAttributed = attributedParagraph(for: replacement, style: style)
-            let replaceRange = NSRange(location: currentParagraphRange.location, length: currentParagraphRange.length - (paragraphText.hasSuffix("\n") ? 1 : 0))
+            let replaceRange = NSRange(location: currentParagraphRange.location, length: paragraphText.utf16.count)
             attributedString.replaceCharacters(in: replaceRange, with: replacementAttributed)
+            end += replacementAttributed.length - replaceRange.length
 
-            let updatedText = attributedString.string as NSString
-            let nextRange = updatedText.paragraphRange(for: NSRange(location: currentParagraphRange.location, length: 0))
-            cursor = NSMaxRange(nextRange)
+            let hadTrailingNewline = currentParagraphRange.length > replaceRange.length
+            cursor = currentParagraphRange.location + replacementAttributed.length + (hadTrailingNewline ? 1 : 0)
 
             if style == .numberedList {
                 numberedIndex += 1
@@ -400,6 +422,7 @@ enum FlintRichTextCodec {
             .replacingOccurrences(of: "_", with: "\\_")
             .replacingOccurrences(of: "[", with: "\\[")
             .replacingOccurrences(of: "]", with: "\\]")
+            .replacingOccurrences(of: "`", with: "\\`")
 
         if let link = attributes[.link] as? URL {
             return "[\(escaped)](\(link.absoluteString))"
@@ -428,7 +451,9 @@ enum FlintRichTextCodec {
 
     private static func attributedParagraph(for text: String, style: FlintBlockStyle) -> NSMutableAttributedString {
         let attributed = NSMutableAttributedString(string: text, attributes: paragraphAttributes(for: style))
-        applyInlineMarkdown(to: attributed)
+        if style != .codeBlock {
+            applyInlineMarkdown(to: attributed)
+        }
         reapplyFonts(in: attributed, range: NSRange(location: 0, length: attributed.length))
         return attributed
     }
@@ -446,13 +471,26 @@ enum FlintRichTextCodec {
         while location < nsSource.length {
             let remaining = nsSource.substring(from: location)
 
+            if remaining.hasPrefix("\\"),
+               location + 1 < nsSource.length {
+                let escapedCharacter = nsSource.substring(with: NSRange(location: location + 1, length: 1))
+                if isEscapableMarkdownCharacter(escapedCharacter) {
+                    result.append(NSAttributedString(
+                        string: escapedCharacter,
+                        attributes: baseAttributes
+                    ))
+                    location += 2
+                    continue
+                }
+            }
+
             if remaining.hasPrefix("["),
                let labelClose = range(of: "](", in: nsSource, from: location),
                let urlClose = range(of: ")", in: nsSource, from: NSMaxRange(labelClose)) {
                 let labelRange = NSRange(location: location + 1, length: labelClose.location - location - 1)
                 let urlRange = NSRange(location: NSMaxRange(labelClose), length: urlClose.location - NSMaxRange(labelClose))
                 if labelRange.length >= 0, urlRange.length >= 0 {
-                    let label = nsSource.substring(with: labelRange)
+                    let label = unescapedMarkdownText(nsSource.substring(with: labelRange))
                     let urlString = nsSource.substring(with: urlRange)
                     if let url = URL(string: urlString) {
                         result.append(NSAttributedString(
@@ -472,7 +510,7 @@ enum FlintRichTextCodec {
                let close = range(of: "***", in: nsSource, from: location + 3) {
                 let contentRange = NSRange(location: location + 3, length: close.location - location - 3)
                 result.append(NSAttributedString(
-                    string: nsSource.substring(with: contentRange),
+                    string: unescapedMarkdownText(nsSource.substring(with: contentRange)),
                     attributes: mergeParagraphAttributes(from: baseAttributes, additional: [
                         .flintBold: true,
                         .flintItalic: true,
@@ -487,7 +525,7 @@ enum FlintRichTextCodec {
                let close = range(of: "**", in: nsSource, from: location + 2) {
                 let contentRange = NSRange(location: location + 2, length: close.location - location - 2)
                 result.append(NSAttributedString(
-                    string: nsSource.substring(with: contentRange),
+                    string: unescapedMarkdownText(nsSource.substring(with: contentRange)),
                     attributes: mergeParagraphAttributes(from: baseAttributes, additional: [
                         .flintBold: true,
                         .font: inlineFont(blockStyle: blockStyle, bold: true, italic: false)
@@ -501,7 +539,7 @@ enum FlintRichTextCodec {
                let close = range(of: "*", in: nsSource, from: location + 1) {
                 let contentRange = NSRange(location: location + 1, length: close.location - location - 1)
                 result.append(NSAttributedString(
-                    string: nsSource.substring(with: contentRange),
+                    string: unescapedMarkdownText(nsSource.substring(with: contentRange)),
                     attributes: mergeParagraphAttributes(from: baseAttributes, additional: [
                         .flintItalic: true,
                         .font: inlineFont(blockStyle: blockStyle, bold: false, italic: true)
@@ -515,7 +553,7 @@ enum FlintRichTextCodec {
                let close = range(of: "`", in: nsSource, from: location + 1) {
                 let contentRange = NSRange(location: location + 1, length: close.location - location - 1)
                 result.append(NSAttributedString(
-                    string: nsSource.substring(with: contentRange),
+                    string: unescapedMarkdownText(nsSource.substring(with: contentRange)),
                     attributes: mergeParagraphAttributes(from: baseAttributes, additional: [
                         .flintInlineCode: true,
                         .font: inlineCodeFont(blockStyle: blockStyle)
@@ -547,6 +585,41 @@ enum FlintRichTextCodec {
             merged[key] = value
         }
         return merged
+    }
+
+    private static func isEscapableMarkdownCharacter(_ string: String) -> Bool {
+        guard let character = string.first, string.count == 1 else { return false }
+        return escapableMarkdownCharacters.contains(character)
+    }
+
+    private static func unescapedMarkdownText(_ text: String) -> String {
+        var output = ""
+        var isEscaping = false
+
+        for character in text {
+            if isEscaping {
+                if escapableMarkdownCharacters.contains(character) {
+                    output.append(character)
+                } else {
+                    output.append("\\")
+                    output.append(character)
+                }
+                isEscaping = false
+                continue
+            }
+
+            if character == "\\" {
+                isEscaping = true
+            } else {
+                output.append(character)
+            }
+        }
+
+        if isEscaping {
+            output.append("\\")
+        }
+
+        return output
     }
 
     private static func paragraphLocation(for paragraphIndex: Int, paragraphs: [String]) -> Int {
