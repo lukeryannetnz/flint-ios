@@ -98,4 +98,19 @@ final class VaultFileServiceTests: XCTestCase {
             """
         )
     }
+
+    func testListMarkdownNotesDoesNotMisreadUncheckedTaskContentAsChecked() throws {
+        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+        let noteURL = vaultURL.appendingPathComponent("Tasks.md")
+
+        try """
+        # Tasks
+
+        - [ ] mention [x] syntax
+        """.write(to: noteURL, atomically: true, encoding: .utf8)
+
+        let notes = try service.listMarkdownNotes(in: vaultURL)
+
+        XCTAssertEqual(notes.first?.previewMarkdown, "○ mention [x] syntax")
+    }
 }

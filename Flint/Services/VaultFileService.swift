@@ -228,7 +228,8 @@ final class VaultFileService: VaultFileServing {
         }
 
         if let checkboxMatch = line.range(of: #"^[-*]\s+\[( |x|X)\]\s+"#, options: .regularExpression) {
-            let marker = line.lowercased().contains("[x]") ? "✓" : "○"
+            let checkboxToken = line[checkboxMatch].lowercased()
+            let marker = checkboxToken.contains("[x]") ? "✓" : "○"
             let content = line[checkboxMatch.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
             return content.isEmpty ? "" : "\(marker) \(content)"
         }
