@@ -52,7 +52,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.selectedNote?.lastModifiedAt, refreshedNote.lastModifiedAt)
     }
 
-    func testMarkdownDocumentRendersRichHTML() {
+    func testRichTextCodecMapsMarkdownIntoFormattingModel() {
         let markdown = """
         # Daily
 
@@ -64,46 +64,165 @@ final class AppModelTests: XCTestCase {
         1. first
         2. second
 
-        - [x] done
-        - [ ] next
-
         > quoted line
-
-        | Name | Value |
-        | --- | --- |
-        | Flint | Spark |
 
         ```swift
         print("hi")
         ```
-
-        ![Sketch](diagram.png)
         """
 
-        let document = MarkdownDocument(noteTitle: "Daily", markdown: markdown)
+        let attributed = FlintRichTextCodec.attributedString(from: markdown)
+        let string = attributed.string as NSString
 
-        XCTAssertFalse(document.markdown.hasPrefix("# Daily"))
-        XCTAssertTrue(document.html.contains("<a href=\"https://example.com\">link</a>"))
-        XCTAssertTrue(document.html.contains("<ul><li>one</li><li>two</li></ul>"))
-        XCTAssertTrue(document.html.contains("<ol><li>first</li><li>second</li></ol>"))
-        XCTAssertTrue(document.html.contains("<ul class=\"task-list\">"))
-        XCTAssertTrue(document.html.contains("<blockquote><p>quoted line</p></blockquote>"))
-        XCTAssertTrue(document.html.contains("<table>"))
-        XCTAssertTrue(document.html.contains("<pre><code class=\"language-swift\">"))
-        XCTAssertTrue(document.html.contains("<figure class=\"md-image\"><img src=\"diagram.png\" alt=\"Sketch\" loading=\"lazy\"><figcaption>Sketch</figcaption></figure>"))
+        XCTAssertEqual(FlintRichTextCodec.blockStyle(at: 0, in: attributed), .heading1)
+
+        let bulletRange = string.range(of: "•\tone")
+        XCTAssertNotEqual(bulletRange.location, NSNotFound)
+        XCTAssertEqual(FlintRichTextCodec.blockStyle(at: bulletRange.location, in: attributed), .bulletList)
+
+        let numberRange = string.range(of: "1.\tfirst")
+        XCTAssertNotEqual(numberRange.location, NSNotFound)
+        XCTAssertEqual(FlintRichTextCodec.blockStyle(at: numberRange.location, in: attributed), .numberedList)
+
+        let quoteRange = string.range(of: "quoted line")
+        XCTAssertNotEqual(quoteRange.location, NSNotFound)
+        XCTAssertEqual(FlintRichTextCodec.blockStyle(at: quoteRange.location, in: attributed), .quote)
+
+        let linkRange = string.range(of: "link")
+        let link = attributed.attribute(.link, at: linkRange.location, effectiveRange: nil) as? URL
+        XCTAssertEqual(link?.absoluteString, "https://example.com")
+
+        let codeRange = string.range(of: "print(\"hi\")")
+        XCTAssertEqual(FlintRichTextCodec.blockStyle(at: codeRange.location, in: attributed), .codeBlock)
     }
 
-    func testMarkdownDocumentRendersYouTubeEmbedAsThumbnail() {
+    func testRichTextCodecReturnsEmptyParagraphTextForEmptyRange() {
+        XCTAssertEqual(
+            FlintRichTextCodec.paragraphText(in: NSString(string: ""), paragraphRange: NSRange(location: 0, length: 0)),
+            ""
+        )
+    }
+
+    func testRichTextCodecSerializesFormattingBackToMarkdown() {
         let markdown = """
-        ![Embedded YouTube video](https://www.youtube.com/embed/k51Q4ibkhDk?feature=oembed&autoplay=true)
+        ## Sprint Plan
+
+        Ship the **prototype** with a [review link](https://example.com).
+
+        - polish interactions
+        - normalize paste
+
+        1. build
+        2. test
+
+        > stay native
+
+        ```
+        print("done")
+        ```
         """
 
-        let document = MarkdownDocument(noteTitle: "Video", markdown: markdown)
+        let attributed = FlintRichTextCodec.attributedString(from: markdown)
+        let serialized = FlintRichTextCodec.markdown(from: attributed)
 
-        XCTAssertTrue(document.html.contains("class=\"md-video-thumb\""))
-        XCTAssertTrue(document.html.contains("https://www.youtube.com/watch?v=k51Q4ibkhDk"))
-        XCTAssertTrue(document.html.contains("https://i.ytimg.com/vi/k51Q4ibkhDk/hqdefault.jpg"))
-        XCTAssertTrue(document.html.contains("<figcaption>Embedded YouTube video</figcaption>"))
+        XCTAssertTrue(serialized.contains("## Sprint Plan"))
+        XCTAssertTrue(serialized.contains("**prototype**"))
+        XCTAssertTrue(serialized.contains("[review link](https://example.com)"))
+        XCTAssertTrue(serialized.contains("- polish interactions"))
+        XCTAssertTrue(serialized.contains("1. build"))
+        XCTAssertTrue(serialized.contains("> stay native"))
+        XCTAssertTrue(serialized.contains("```"))
+        XCTAssertTrue(serialized.contains("print(\"done\")"))
+    }
+
+    func testRichTextCodecTracksSemanticBoldAndItalicAttributes() {
+        let markdown = """
+        # Title
+
+        Use **bold**, *italic*, and ***both***.
+        """
+
+        let attributed = FlintRichTextCodec.attributedString(from: markdown)
+        let string = attributed.string as NSString
+
+        let headingState = FlintRichTextCodec.formattingState(
+            attributedString: attributed,
+            selectedRange: NSRange(location: 0, length: 0),
+            undoManager: nil
+        )
+        XCTAssertFalse(headingState.isBold)
+        XCTAssertFalse(headingState.isItalic)
+
+        let boldRange = string.range(of: "bold")
+        XCTAssertEqual(attributed.attribute(.flintBold, at: boldRange.location, effectiveRange: nil) as? Bool, true)
+        XCTAssertNil(attributed.attribute(.flintItalic, at: boldRange.location, effectiveRange: nil))
+
+        let italicRange = string.range(of: "italic")
+        XCTAssertEqual(attributed.attribute(.flintItalic, at: italicRange.location, effectiveRange: nil) as? Bool, true)
+        XCTAssertNil(attributed.attribute(.flintBold, at: italicRange.location, effectiveRange: nil))
+
+        let bothRange = string.range(of: "both")
+        let emphasisState = FlintRichTextCodec.formattingState(
+            attributedString: attributed,
+            selectedRange: NSRange(location: bothRange.location, length: 0),
+            undoManager: nil
+        )
+        XCTAssertTrue(emphasisState.isBold)
+        XCTAssertTrue(emphasisState.isItalic)
+    }
+
+    func testRichTextCodecAppliesBlockStyleAcrossMultipleParagraphsWithoutCorruptingAdjacentContent() {
+        let markdown = """
+        - one
+        - two
+
+        > keep me
+        """
+
+        let attributed = FlintRichTextCodec.attributedString(from: markdown)
+        let string = attributed.string as NSString
+        let secondRange = string.range(of: "•\ttwo")
+        let paragraphRange = string.paragraphRange(for: NSRange(location: 0, length: NSMaxRange(secondRange)))
+
+        FlintRichTextCodec.applyBlockStyle(.body, to: attributed, paragraphRange: paragraphRange)
+
+        XCTAssertEqual(FlintRichTextCodec.markdown(from: attributed), "one\ntwo\n\n> keep me")
+
+        let updatedString = attributed.string as NSString
+        let quoteRange = updatedString.range(of: "keep me")
+        XCTAssertEqual(FlintRichTextCodec.blockStyle(at: quoteRange.location, in: attributed), .quote)
+    }
+
+    func testRichTextCodecPreservesLiteralContentInsideFencedCodeBlocks() {
+        let markdown = """
+        ```
+        *ptr* [x](y)
+        ```
+        """
+
+        let attributed = FlintRichTextCodec.attributedString(from: markdown)
+        XCTAssertEqual(attributed.string, "*ptr* [x](y)")
+        XCTAssertEqual(FlintRichTextCodec.blockStyle(at: 0, in: attributed), .codeBlock)
+
+        let string = attributed.string as NSString
+        let codeRange = string.range(of: "*ptr* [x](y)")
+        XCTAssertNotEqual(codeRange.location, NSNotFound)
+        guard codeRange.location != NSNotFound else { return }
+        XCTAssertNil(attributed.attribute(.link, at: codeRange.location, effectiveRange: nil))
+        XCTAssertNil(attributed.attribute(.flintBold, at: codeRange.location, effectiveRange: nil))
+        XCTAssertNil(attributed.attribute(.flintItalic, at: codeRange.location, effectiveRange: nil))
+        XCTAssertEqual(FlintRichTextCodec.markdown(from: attributed), markdown)
+    }
+
+    func testRichTextCodecRoundTripsEscapedLiteralMarkdownPunctuation() {
+        let markdown = #"""
+        Literal \*asterisk\*, \_underscore\_, \[brackets\], \\ slash, and \`tick\`
+        """#
+
+        let attributed = FlintRichTextCodec.attributedString(from: markdown)
+
+        XCTAssertEqual(attributed.string, #"Literal *asterisk*, _underscore_, [brackets], \ slash, and `tick`"#)
+        XCTAssertEqual(FlintRichTextCodec.markdown(from: attributed), markdown)
     }
 
     func testVaultFolderBuildsNestedTreeFromNotes() {

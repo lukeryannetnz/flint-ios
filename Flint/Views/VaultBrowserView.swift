@@ -1,6 +1,5 @@
 import SwiftUI
 import UIKit
-import WebKit
 
 struct VaultBrowserView: View {
     private enum SwipeBackBehavior {
@@ -33,8 +32,6 @@ struct VaultBrowserView: View {
     @State private var noteName = ""
     @State private var browserMode: BrowserMode = .recent
     @State private var folderPathComponents: [String] = []
-    @State private var presentationMode: DocumentPresentationMode = .rendered
-    @State private var isInlineEditing = false
 
     var body: some View {
         splitView
@@ -92,22 +89,19 @@ struct VaultBrowserView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .opacity(isInlineEditing ? 0 : 1)
                 }
 
-                if !isInlineEditing {
-                    ToolbarItemGroup(placement: .primaryAction) {
-                        Button {
-                            isShowingCreateNoteSheet = true
-                        } label: {
-                            Label("New Note", systemImage: "square.and.pencil")
-                        }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button {
+                        isShowingCreateNoteSheet = true
+                    } label: {
+                        Label("New Note", systemImage: "square.and.pencil")
+                    }
 
-                        Button {
-                            isShowingOpenPicker = true
-                        } label: {
-                            Label("Open Vault", systemImage: "folder")
-                        }
+                    Button {
+                        isShowingOpenPicker = true
+                    } label: {
+                        Label("Open Vault", systemImage: "folder")
                     }
                 }
             }
@@ -127,13 +121,10 @@ struct VaultBrowserView: View {
         if let selectedNote = model.selectedNote {
             NoteDocumentView(
                 note: selectedNote,
-                vaultURL: model.activeVault?.url,
                 text: Binding(
                     get: { model.noteText },
                     set: { model.updateNoteText($0) }
                 ),
-                presentationMode: $presentationMode,
-                isInlineEditing: $isInlineEditing,
                 onSave: {
                     Task {
                         await model.saveCurrentNoteIfNeeded()
@@ -192,10 +183,6 @@ struct VaultBrowserView: View {
     }
 
     private func handleSelectedNoteURLChange(_ newValue: URL?) {
-        if model.selectedNote?.url != newValue {
-            isInlineEditing = false
-        }
-
         guard let newValue, let note = model.notes.first(where: { $0.url == newValue }) else { return }
 
         Task {
@@ -308,169 +295,247 @@ struct VaultBrowserView: View {
     }
 }
 
-private enum DocumentPresentationMode: String, CaseIterable, Identifiable {
-    case rendered
-    case markdown
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .rendered:
-            return "Document"
-        case .markdown:
-            return "Markdown"
-        }
-    }
-}
-
 private struct NoteDocumentView: View {
     let note: NoteItem
-    let vaultURL: URL?
     @Binding var text: String
-    @Binding var presentationMode: DocumentPresentationMode
-    @Binding var isInlineEditing: Bool
     let onSave: () -> Void
-    @State private var didAppearForCurrentNote = false
-    @State private var inlineEditorHeight: CGFloat = 420
-    @State private var isMarkdownEditorFocused = false
-
-    private var document: MarkdownDocument {
-        MarkdownDocument(noteTitle: note.title, markdown: text)
-    }
+    @State private var isEditing = false
+    @State private var formattingState = FlintFormattingState()
+    @State private var pendingCommand: RichTextEditorCommand?
+    @State private var nextCommandID = 0
+    @State private var isShowingLinkPrompt = false
+    @State private var pendingLink = "https://"
 
     var body: some View {
         ZStack {
             Color(uiColor: .systemGroupedBackground)
                 .ignoresSafeArea()
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    Color.clear
-                        .frame(height: 0)
-                        .id("note-top")
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(note.relativePath)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
 
-                    VStack(alignment: .leading, spacing: 24) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text(note.title)
-                                .font(.system(size: 34, weight: .semibold, design: .serif))
-                                .foregroundStyle(Color.primary)
+                        Text(note.lastEditedDisplayText)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
 
-                            HStack(spacing: 12) {
-                                Text(note.relativePath)
-                                Text(note.lastEditedDisplayText)
-                                Spacer()
-                                DocumentModeMenu(presentationMode: $presentationMode)
-                                if isInlineEditing {
-                                    Button {
-                                        isMarkdownEditorFocused = false
-                                    } label: {
-                                        Image(systemName: "keyboard.chevron.compact.down")
-                                            .font(.caption.weight(.semibold))
-                                    }
-                                    .buttonStyle(.plain)
-                                    .foregroundStyle(.secondary)
-                                }
+                        if isEditing {
+                            Button {
+                                pendingCommand = makeCommand(.endEditing)
+                            } label: {
+                                Image(systemName: "keyboard.chevron.compact.down")
+                                    .font(.caption.weight(.semibold))
                             }
-                            .font(.footnote)
+                            .buttonStyle(.plain)
                             .foregroundStyle(.secondary)
                         }
+                    }
+                    Text(note.title)
+                        .font(.system(size: 34, weight: .semibold, design: .serif))
+                        .foregroundStyle(.primary)
+                }
 
-                        if isInlineEditing {
-                            InlineMarkdownEditor(
-                                text: $text,
-                                isEditing: $isInlineEditing,
-                                measuredHeight: $inlineEditorHeight,
-                                isFocused: $isMarkdownEditorFocused
-                            ) {
-                                handleInlineEditingEnded()
-                            }
-                                .id("editor-\(note.url.path)")
-                                .frame(maxWidth: .infinity, minHeight: inlineEditorHeight, alignment: .topLeading)
-                                .background(documentSurface)
-                        } else if presentationMode == .markdown {
-                            TextEditor(text: $text)
-                                .id("editor-\(note.url.path)")
-                                .font(.system(size: 17, weight: .regular, design: .default))
-                                .frame(minHeight: 420)
-                                .padding(18)
-                                .background(documentSurface)
-                        } else {
-                            MarkdownDocumentView(
-                                document: document,
-                                noteURL: note.url,
-                                vaultURL: vaultURL,
-                                onTapDocument: {
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        isInlineEditing = true
-                                        isMarkdownEditorFocused = true
-                                    }
-                                }
-                            )
-                                .id("rendered-\(note.url.path)")
-                                .padding(22)
-                                .background(documentSurface)
+                if isEditing {
+                    RichFormattingBar(
+                        formattingState: formattingState,
+                        onCommand: { action in
+                            pendingCommand = makeCommand(action)
+                        },
+                        onInsertLink: {
+                            pendingLink = "https://"
+                            isShowingLinkPrompt = true
                         }
-                    }
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 28)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                .scrollDismissesKeyboard(.interactively)
-                .onChange(of: note.url) { _, _ in
-                    didAppearForCurrentNote = false
-                    inlineEditorHeight = 420
-                    isMarkdownEditorFocused = false
-                    proxy.scrollTo("note-top", anchor: .top)
-                }
-                .onChange(of: presentationMode) { _, newValue in
-                    if newValue == .markdown, isInlineEditing {
-                        handleInlineEditingEnded()
-                    }
-                }
-                .onAppear {
-                    didAppearForCurrentNote = true
-                    proxy.scrollTo("note-top", anchor: .top)
-                }
-            }
 
+                RichTextNoteEditor(
+                    noteID: note.url,
+                    markdown: $text,
+                    isEditing: $isEditing,
+                    formattingState: $formattingState,
+                    pendingCommand: $pendingCommand,
+                    onSave: onSave
+                )
+                .id(note.url.path)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(documentSurface, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 28)
         }
-        .animation(.easeInOut(duration: 0.2), value: isInlineEditing)
+        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: isEditing)
+        .alert("Add Link", isPresented: $isShowingLinkPrompt) {
+            TextField("https://example.com", text: $pendingLink)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Cancel", role: .cancel) {}
+            Button("Apply") {
+                pendingCommand = makeCommand(.applyLink(pendingLink))
+            }
+            .disabled(pendingLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } message: {
+            Text("Apply the link to the current selection.")
+        }
+        .onChange(of: note.url) { _, _ in
+            isEditing = false
+            formattingState = FlintFormattingState()
+            pendingCommand = nil
+            pendingLink = "https://"
+        }
     }
 
     private var documentSurface: some ShapeStyle {
-        Color(uiColor: .secondarySystemBackground)
+        LinearGradient(
+            colors: [
+                Color(uiColor: .secondarySystemBackground),
+                Color(uiColor: .systemBackground)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
 
-    private func handleInlineEditingEnded() {
-        guard didAppearForCurrentNote, presentationMode != .markdown, isInlineEditing else { return }
-
-        isMarkdownEditorFocused = false
-        withAnimation(.easeInOut(duration: 0.2)) {
-            isInlineEditing = false
-        }
-
-        onSave()
+    private func makeCommand(_ action: RichTextEditorCommand.Action) -> RichTextEditorCommand {
+        nextCommandID += 1
+        return RichTextEditorCommand(id: nextCommandID, action: action)
     }
 }
 
-private struct DocumentModeMenu: View {
-    @Binding var presentationMode: DocumentPresentationMode
+private struct RichTextSurfaceDiagnostics: Equatable {
+    var viewportSize: CGSize = .zero
+    var contentSize: CGSize = .zero
+    var contentOffset: CGPoint = .zero
+    var adjustedInsets: UIEdgeInsets = .zero
+    var availableTextWidth: CGFloat = 0
+    var textContainerWidth: CGFloat = 0
+    var selectedRange = NSRange(location: 0, length: 0)
+    var isEditing = false
+    var isDragging = false
+    var isDecelerating = false
+    var isTracking = false
+    var panState = "possible"
+
+    var horizontalOverflow: CGFloat {
+        max(contentSize.width - viewportSize.width, 0)
+    }
+
+    var textContainerOverflow: CGFloat {
+        max(textContainerWidth - availableTextWidth, 0)
+    }
+}
+
+private struct RichFormattingBar: View {
+    let formattingState: FlintFormattingState
+    let onCommand: (RichTextEditorCommand.Action) -> Void
+    let onInsertLink: () -> Void
 
     var body: some View {
-        Menu {
-            ForEach(DocumentPresentationMode.allCases) { mode in
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
                 Button {
-                    presentationMode = mode
+                    onCommand(.undo)
                 } label: {
-                    Label(mode.title, systemImage: presentationMode == mode ? "checkmark" : mode.iconName)
+                    Image(systemName: "arrow.uturn.backward")
                 }
+                .disabled(!formattingState.canUndo)
+                .modifier(ChromeButtonStyle(isActive: false))
+
+                Button {
+                    onCommand(.redo)
+                } label: {
+                    Image(systemName: "arrow.uturn.forward")
+                }
+                .disabled(!formattingState.canRedo)
+                .modifier(ChromeButtonStyle(isActive: false))
+
+                Menu {
+                    ForEach(FlintBlockStyle.allCases, id: \.self) { style in
+                        Button {
+                            onCommand(.setBlockStyle(style))
+                        } label: {
+                            Label(style.label, systemImage: formattingState.blockStyle == style ? "checkmark" : blockSymbol(for: style))
+                        }
+                    }
+                } label: {
+                    Label(formattingState.blockStyle.label, systemImage: blockSymbol(for: formattingState.blockStyle))
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
+                }
+
+                Button {
+                    onCommand(.toggleBold)
+                } label: {
+                    Image(systemName: "bold")
+                }
+                .modifier(ChromeButtonStyle(isActive: formattingState.isBold))
+
+                Button {
+                    onCommand(.toggleItalic)
+                } label: {
+                    Image(systemName: "italic")
+                }
+                .modifier(ChromeButtonStyle(isActive: formattingState.isItalic))
+
+                Button {
+                    onCommand(.toggleInlineCode)
+                } label: {
+                    Image(systemName: "chevron.left.forwardslash.chevron.right")
+                }
+                .modifier(ChromeButtonStyle(isActive: formattingState.isCode))
+
+                Button {
+                    formattingState.hasLink ? onCommand(.removeLink) : onInsertLink()
+                } label: {
+                    Image(systemName: formattingState.hasLink ? "link.badge.minus" : "link.badge.plus")
+                }
+                .disabled(!formattingState.hasSelection && !formattingState.hasLink)
+                .modifier(ChromeButtonStyle(isActive: formattingState.hasLink))
             }
-        } label: {
-            Label(presentationMode.title, systemImage: presentationMode.iconName)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
         }
+    }
+
+    private func blockSymbol(for style: FlintBlockStyle) -> String {
+        switch style {
+        case .body:
+            return "text.alignleft"
+        case .heading1:
+            return "textformat.size.larger"
+        case .heading2:
+            return "textformat"
+        case .heading3:
+            return "textformat.size.smaller"
+        case .bulletList:
+            return "list.bullet"
+        case .numberedList:
+            return "list.number"
+        case .quote:
+            return "text.quote"
+        case .codeBlock:
+            return "curlybraces"
+        }
+    }
+}
+
+private struct ChromeButtonStyle: ViewModifier {
+    let isActive: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(isActive ? Color.accentColor : .secondary)
+            .frame(width: 34, height: 34)
+            .background(
+                Circle()
+                    .fill(isActive ? Color.accentColor.opacity(0.14) : Color(uiColor: .secondarySystemBackground))
+            )
     }
 }
 
@@ -599,266 +664,696 @@ private struct BreadcrumbChip: View {
     }
 }
 
-private struct MarkdownDocumentView: View {
-    let document: MarkdownDocument
-    let noteURL: URL
-    let vaultURL: URL?
-    let onTapDocument: () -> Void
-    @State private var contentHeight: CGFloat = 1
-
-    var body: some View {
-        MarkdownWebView(
-            html: document.html,
-            noteURL: noteURL,
-            vaultURL: vaultURL,
-            onTapDocument: onTapDocument,
-            contentHeight: $contentHeight
-        )
-        .frame(height: max(contentHeight, 1))
-        .frame(maxWidth: .infinity, alignment: .leading)
+private struct RichTextEditorCommand: Equatable {
+    enum Action: Equatable {
+        case toggleBold
+        case toggleItalic
+        case toggleInlineCode
+        case setBlockStyle(FlintBlockStyle)
+        case applyLink(String)
+        case removeLink
+        case undo
+        case redo
+        case endEditing
     }
+
+    let id: Int
+    let action: Action
 }
 
-private struct InlineMarkdownEditor: UIViewRepresentable {
-    @Binding var text: String
+private struct RichTextNoteEditor: UIViewRepresentable {
+    let noteID: URL
+    @Binding var markdown: String
     @Binding var isEditing: Bool
-    @Binding var measuredHeight: CGFloat
-    @Binding var isFocused: Bool
-    let onEndEditing: () -> Void
+    @Binding var formattingState: FlintFormattingState
+    @Binding var pendingCommand: RichTextEditorCommand?
+    let onSave: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
-            text: $text,
+            markdown: $markdown,
             isEditing: $isEditing,
-            measuredHeight: $measuredHeight,
-            isFocused: $isFocused,
-            onEndEditing: onEndEditing
+            formattingState: $formattingState,
+            pendingCommand: $pendingCommand,
+            onSave: onSave
         )
     }
 
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+    func makeUIView(context: Context) -> FlintRichTextView {
+        let textView = FlintRichTextView()
         textView.delegate = context.coordinator
-        textView.backgroundColor = .clear
-        textView.adjustsFontForContentSizeCategory = true
-        textView.alwaysBounceVertical = false
-        textView.autocapitalizationType = .sentences
-        textView.autocorrectionType = .yes
-        textView.font = UIFont.preferredFont(forTextStyle: .body)
-        textView.isScrollEnabled = false
-        textView.keyboardDismissMode = .interactive
-        textView.textAlignment = .natural
-        textView.textContainer.widthTracksTextView = true
-        textView.textContainer.lineBreakMode = .byWordWrapping
-        textView.showsHorizontalScrollIndicator = false
-        textView.smartDashesType = .yes
-        textView.smartQuotesType = .yes
-        textView.smartInsertDeleteType = .yes
-        textView.textContainerInset = UIEdgeInsets(top: 22, left: 22, bottom: 22, right: 22)
-        textView.textContainer.lineFragmentPadding = 0
-        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textView.onReadTap = { [weak coordinator = context.coordinator] location in
+            coordinator?.beginEditing(at: location)
+        }
+        context.coordinator.attach(textView)
         return textView
     }
 
-    func updateUIView(_ textView: UITextView, context: Context) {
-        context.coordinator.onEndEditing = onEndEditing
+    func updateUIView(_ textView: FlintRichTextView, context: Context) {
+        context.coordinator.onSave = onSave
+        context.coordinator.noteID = noteID
 
-        if textView.text != text {
-            textView.text = text
+        let requiresReload = context.coordinator.lastLoadedNoteID != noteID ||
+            (!context.coordinator.isApplyingInternalChange && context.coordinator.lastSerializedMarkdown != markdown)
+        let requiresWidthDeferredReload = context.coordinator.needsDeferredWidthLoad && textView.currentAvailableTextWidth() > 1
+
+        if requiresReload || requiresWidthDeferredReload {
+            context.coordinator.loadMarkdown(markdown, for: noteID)
         }
 
-        if isEditing, isFocused, textView.window != nil, !textView.isFirstResponder {
+        textView.isEditable = isEditing
+        textView.isSelectable = isEditing
+        textView.tintColor = UIColor(named: "AccentColor") ?? .systemBlue
+        textView.showsVerticalScrollIndicator = true
+        textView.stabilizeScrollGeometry()
+        textView.updatePlaceholderVisibility()
+
+        if isEditing, textView.window != nil, !textView.isFirstResponder {
             DispatchQueue.main.async {
-                guard isEditing, isFocused, textView.window != nil, !textView.isFirstResponder else { return }
+                guard isEditing, textView.window != nil, !textView.isFirstResponder else { return }
                 textView.becomeFirstResponder()
             }
-        } else if (!isEditing || !isFocused), textView.isFirstResponder {
+        } else if !isEditing, textView.isFirstResponder {
             textView.resignFirstResponder()
         }
 
-        context.coordinator.updateMeasuredHeight(for: textView)
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
-        let width = proposal.width ?? uiView.bounds.width
-        guard width > 0 else { return nil }
-        return CGSize(width: width, height: max(measuredHeight, 420))
+        if let pendingCommand, context.coordinator.lastHandledCommandID != pendingCommand.id {
+            context.coordinator.handle(command: pendingCommand)
+        }
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
-        @Binding var text: String
+        @Binding var markdown: String
         @Binding var isEditing: Bool
-        @Binding var measuredHeight: CGFloat
-        @Binding var isFocused: Bool
-        var onEndEditing: () -> Void
-        weak var textView: UITextView?
+        @Binding var formattingState: FlintFormattingState
+        @Binding var pendingCommand: RichTextEditorCommand?
+        var onSave: () -> Void
+        weak var textView: FlintRichTextView?
+        var noteID: URL?
+        var lastLoadedNoteID: URL?
+        var lastSerializedMarkdown = ""
+        var lastHandledCommandID = 0
+        var isApplyingInternalChange = false
+        var lastKnownSelectedRange = NSRange(location: 0, length: 0)
+        var selectionBeforeToolbarInteraction: NSRange?
+        var needsDeferredWidthLoad = true
+        var lastLoadedAvailableTextWidth: CGFloat = 0
+        var lastOverflowCorrectionWidth: CGFloat = -1
+        var isReconcilingLayoutMetrics = false
 
         init(
-            text: Binding<String>,
+            markdown: Binding<String>,
             isEditing: Binding<Bool>,
-            measuredHeight: Binding<CGFloat>,
-            isFocused: Binding<Bool>,
-            onEndEditing: @escaping () -> Void
+            formattingState: Binding<FlintFormattingState>,
+            pendingCommand: Binding<RichTextEditorCommand?>,
+            onSave: @escaping () -> Void
         ) {
-            _text = text
+            _markdown = markdown
             _isEditing = isEditing
-            _measuredHeight = measuredHeight
-            _isFocused = isFocused
-            self.onEndEditing = onEndEditing
+            _formattingState = formattingState
+            _pendingCommand = pendingCommand
+            self.onSave = onSave
         }
 
-        func textViewDidChange(_ textView: UITextView) {
+        func attach(_ textView: FlintRichTextView) {
             self.textView = textView
-            text = textView.text
-            updateMeasuredHeight(for: textView)
-        }
-
-        func textViewDidBeginEditing(_ textView: UITextView) {
-            self.textView = textView
-            if !isEditing {
-                isEditing = true
-            }
-            if !isFocused {
-                isFocused = true
-            }
-            updateMeasuredHeight(for: textView)
-        }
-
-        func textViewDidEndEditing(_ textView: UITextView) {
-            self.textView = textView
-            text = textView.text
-            updateMeasuredHeight(for: textView)
-            if isFocused {
-                isFocused = false
-            }
-            if isEditing {
-                isEditing = false
-            }
-            onEndEditing()
-        }
-
-        func updateMeasuredHeight(for textView: UITextView) {
-            let targetWidth = textView.bounds.width > 0
-                ? textView.bounds.width
-                : UIScreen.main.bounds.width - 88
-            guard targetWidth > 0 else { return }
-
-            let fittingSize = textView.sizeThatFits(
-                CGSize(width: targetWidth, height: .greatestFiniteMagnitude)
-            )
-            let nextHeight = max(fittingSize.height, 420)
-
-            if abs(measuredHeight - nextHeight) > 0.5 {
-                DispatchQueue.main.async {
-                    self.measuredHeight = nextHeight
-                }
-            }
-        }
-    }
-}
-
-private struct MarkdownWebView: UIViewRepresentable {
-    let html: String
-    let noteURL: URL
-    let vaultURL: URL?
-    let onTapDocument: () -> Void
-    @Binding var contentHeight: CGFloat
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(contentHeight: $contentHeight, onTapDocument: onTapDocument)
-    }
-
-    func makeUIView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        configuration.userContentController.add(context.coordinator, name: Coordinator.documentTapHandlerName)
-
-        let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.navigationDelegate = context.coordinator
-        webView.isOpaque = false
-        webView.backgroundColor = .clear
-        webView.scrollView.backgroundColor = .clear
-        webView.scrollView.isScrollEnabled = false
-        webView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return webView
-    }
-
-    func updateUIView(_ webView: WKWebView, context: Context) {
-        context.coordinator.onTapDocument = onTapDocument
-        let contentKey = "\(noteURL.path)|\(html)"
-        guard context.coordinator.lastContentKey != contentKey else { return }
-        context.coordinator.lastContentKey = contentKey
-        webView.loadHTMLString(html, baseURL: vaultURL ?? noteURL.deletingLastPathComponent())
-    }
-
-    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
-        webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.documentTapHandlerName)
-    }
-
-    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
-        static let documentTapHandlerName = "documentTap"
-
-        @Binding var contentHeight: CGFloat
-        var lastContentKey: String?
-        var onTapDocument: () -> Void
-
-        init(contentHeight: Binding<CGFloat>, onTapDocument: @escaping () -> Void) {
-            _contentHeight = contentHeight
-            self.onTapDocument = onTapDocument
-        }
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            let installTapHandler = """
-            (() => {
-              if (window.__flintDocumentTapInstalled) { return; }
-              window.__flintDocumentTapInstalled = true;
-              document.addEventListener('click', function(event) {
-                const link = event.target.closest('a');
-                if (link) { return; }
-                window.webkit.messageHandlers.\(Self.documentTapHandlerName).postMessage('tap');
-              });
-            })();
-            """
-            webView.evaluateJavaScript(installTapHandler)
-            webView.evaluateJavaScript("document.documentElement.scrollHeight") { result, _ in
-                guard let height = result as? CGFloat else { return }
-                DispatchQueue.main.async {
-                    self.contentHeight = height
+            textView.backgroundColor = .clear
+            textView.adjustsFontForContentSizeCategory = true
+            textView.alwaysBounceVertical = true
+            textView.alwaysBounceHorizontal = false
+            textView.autocapitalizationType = .sentences
+            textView.autocorrectionType = .yes
+            textView.isDirectionalLockEnabled = true
+            textView.isScrollEnabled = true
+            textView.keyboardDismissMode = .interactive
+            textView.smartDashesType = .yes
+            textView.smartQuotesType = .yes
+            textView.smartInsertDeleteType = .yes
+            textView.showsHorizontalScrollIndicator = false
+            textView.contentInsetAdjustmentBehavior = .automatic
+            textView.textContainerInset = UIEdgeInsets(top: 30, left: 28, bottom: 40, right: 28)
+            textView.textContainer.widthTracksTextView = false
+            textView.textContainer.heightTracksTextView = false
+            textView.textContainer.lineFragmentPadding = 0
+            textView.textContainer.lineBreakMode = .byWordWrapping
+            textView.typingAttributes = FlintRichTextCodec.defaultTypingAttributes(for: .body)
+            textView.linkTextAttributes = [.foregroundColor: UIColor.systemBlue]
+            textView.placeholderText = "Start writing. Tap anywhere to place the cursor."
+            textView.onLayoutMetricsChange = { [weak self] richTextView in
+                DispatchQueue.main.async { [weak self, weak richTextView] in
+                    guard let self, let richTextView else { return }
+                    self.reconcileLayoutMetrics(in: richTextView)
                 }
             }
         }
 
-        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.name == Self.documentTapHandlerName else { return }
-            DispatchQueue.main.async {
-                self.onTapDocument()
-            }
-        }
-
-        func webView(
-            _ webView: WKWebView,
-            decidePolicyFor navigationAction: WKNavigationAction,
-            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
-        ) {
-            if navigationAction.navigationType == .linkActivated, let url = navigationAction.request.url {
-                UIApplication.shared.open(url)
-                decisionHandler(.cancel)
+        func loadMarkdown(_ markdown: String, for noteID: URL) {
+            guard let textView else { return }
+            let availableWidth = textView.currentAvailableTextWidth()
+            if availableWidth <= 1 {
+                needsDeferredWidthLoad = true
                 return
             }
 
-            decisionHandler(.allow)
+            isApplyingInternalChange = true
+            if lastLoadedNoteID != noteID {
+                lastOverflowCorrectionWidth = -1
+            }
+            let attributed = FlintRichTextCodec.attributedString(from: markdown)
+            textView.attributedText = attributed
+            FlintRichTextCodec.normalizeStyling(in: textView.textStorage)
+            textView.typingAttributes = FlintRichTextCodec.defaultTypingAttributes(for: .body)
+            textView.setNeedsLayout()
+            textView.layoutIfNeeded()
+            textView.stabilizeScrollGeometry()
+            let initialRange = NSRange(location: 0, length: 0)
+            textView.selectedRange = initialRange
+            lastKnownSelectedRange = initialRange
+            textView.updatePlaceholderVisibility()
+            lastLoadedNoteID = noteID
+            lastLoadedAvailableTextWidth = textView.currentAvailableTextWidth()
+            lastSerializedMarkdown = markdown
+            needsDeferredWidthLoad = false
+            formattingState = FlintRichTextCodec.formattingState(
+                attributedString: textView.attributedText,
+                selectedRange: textView.selectedRange,
+                undoManager: textView.undoManager,
+                typingAttributes: textView.typingAttributes
+            )
+            isApplyingInternalChange = false
+        }
+
+        func beginEditing(at location: CGPoint) {
+            guard let textView else { return }
+            let safeLocation = location
+            isEditing = true
+            DispatchQueue.main.async {
+                guard let position = textView.closestPosition(to: safeLocation) else {
+                    textView.becomeFirstResponder()
+                    return
+                }
+                textView.selectedTextRange = textView.textRange(from: position, to: position)
+                self.lastKnownSelectedRange = textView.selectedRange
+                textView.becomeFirstResponder()
+                self.refreshStateAndMarkdown(from: textView)
+            }
+        }
+
+        func handle(command: RichTextEditorCommand) {
+            guard let textView else { return }
+            lastHandledCommandID = command.id
+            restoreSelectionIfNeeded(in: textView)
+
+            switch command.action {
+            case .toggleBold:
+                toggleFontTrait(.traitBold, in: textView)
+            case .toggleItalic:
+                toggleFontTrait(.traitItalic, in: textView)
+            case .toggleInlineCode:
+                toggleInlineCode(in: textView)
+            case .setBlockStyle(let style):
+                applyBlockStyle(style, in: textView)
+            case .applyLink(let string):
+                applyLink(string, in: textView)
+            case .removeLink:
+                mutateSelection(in: textView) { attributed, range in
+                    attributed.removeAttribute(.link, range: range)
+                }
+            case .undo:
+                textView.undoManager?.undo()
+            case .redo:
+                textView.undoManager?.redo()
+            case .endEditing:
+                isEditing = false
+                textView.resignFirstResponder()
+            }
+
+            selectionBeforeToolbarInteraction = nil
+            pendingCommand = nil
+            if isEditing, textView.window != nil, !textView.isFirstResponder {
+                textView.becomeFirstResponder()
+            }
+            refreshStateAndMarkdown(from: textView)
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            if !isEditing {
+                isEditing = true
+            }
+            refreshStateAndMarkdown(from: textView)
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            guard let richTextView = textView as? FlintRichTextView else { return }
+            FlintRichTextCodec.normalizeStyling(in: richTextView.textStorage)
+            lastKnownSelectedRange = richTextView.selectedRange
+            refreshStateAndMarkdown(from: richTextView)
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            lastKnownSelectedRange = textView.selectedRange
+            refreshStateAndMarkdown(from: textView)
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            if pendingCommand != nil {
+                selectionBeforeToolbarInteraction = lastKnownSelectedRange
+                DispatchQueue.main.async {
+                    guard self.pendingCommand != nil else { return }
+                    self.isEditing = true
+                    textView.becomeFirstResponder()
+                    self.refreshStateAndMarkdown(from: textView)
+                }
+                return
+            }
+
+            if isEditing {
+                isEditing = false
+            }
+            onSave()
+            refreshStateAndMarkdown(from: textView)
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard let textView = scrollView as? FlintRichTextView else { return }
+            textView.stabilizeScrollGeometry()
+        }
+
+        func textView(
+            _ textView: UITextView,
+            shouldInteractWith url: URL,
+            in characterRange: NSRange,
+            interaction: UITextItemInteraction
+        ) -> Bool {
+            if isEditing {
+                return true
+            }
+
+            UIApplication.shared.open(url)
+            return false
+        }
+
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText replacement: String) -> Bool {
+            guard let richTextView = textView as? FlintRichTextView else { return true }
+
+            if replacement == "\n" {
+                return handleReturn(in: richTextView, range: range)
+            }
+
+            return true
+        }
+
+        private func handleReturn(in textView: FlintRichTextView, range: NSRange) -> Bool {
+            let text = textView.attributedText.string as NSString
+            let paragraphRange = text.paragraphRange(for: range)
+            let style = FlintRichTextCodec.blockStyle(at: paragraphRange.location, in: textView.attributedText)
+            let paragraphText = FlintRichTextCodec.paragraphText(in: text, paragraphRange: paragraphRange)
+            let visibleContent = FlintRichTextCodec.visibleContent(for: paragraphText, style: style)
+
+            switch style {
+            case .bulletList, .numberedList:
+                let nextStyle: FlintBlockStyle = visibleContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .body : style
+                let insertion = NSMutableAttributedString(string: "\n", attributes: FlintRichTextCodec.defaultTypingAttributes(for: nextStyle))
+                if nextStyle == .bulletList {
+                    insertion.append(NSAttributedString(string: FlintRichTextCodec.visiblePrefix(for: .bulletList, paragraphText: ""), attributes: FlintRichTextCodec.defaultTypingAttributes(for: .bulletList)))
+                } else if nextStyle == .numberedList {
+                    insertion.append(NSAttributedString(string: "1.\t", attributes: FlintRichTextCodec.defaultTypingAttributes(for: .numberedList)))
+                }
+                textView.textStorage.replaceCharacters(in: range, with: insertion)
+                let cursorLocation = range.location + insertion.length
+                FlintRichTextCodec.normalizeStyling(in: textView.textStorage)
+                textView.selectedRange = NSRange(location: cursorLocation, length: 0)
+                refreshStateAndMarkdown(from: textView)
+                return false
+            case .quote, .heading1, .heading2, .heading3, .codeBlock:
+                let followOnStyle: FlintBlockStyle = style == .codeBlock ? .codeBlock : .body
+                let insertion = NSAttributedString(string: "\n", attributes: FlintRichTextCodec.defaultTypingAttributes(for: followOnStyle))
+                textView.textStorage.replaceCharacters(in: range, with: insertion)
+                textView.selectedRange = NSRange(location: range.location + 1, length: 0)
+                FlintRichTextCodec.normalizeStyling(in: textView.textStorage)
+                refreshStateAndMarkdown(from: textView)
+                return false
+            case .body:
+                return true
+            }
+        }
+
+        private func toggleFontTrait(_ trait: UIFontDescriptor.SymbolicTraits, in textView: FlintRichTextView) {
+            let emphasisKey: NSAttributedString.Key = trait == .traitBold ? .flintBold : .flintItalic
+
+            if textView.selectedRange.length == 0 {
+                var typingAttributes = textView.typingAttributes
+                let isEnabled = (typingAttributes[emphasisKey] as? Bool) ?? false
+                if isEnabled {
+                    typingAttributes.removeValue(forKey: emphasisKey)
+                } else {
+                    typingAttributes[emphasisKey] = true
+                }
+                typingAttributes[.font] = FlintRichTextCodec.font(for: typingAttributes)
+                textView.typingAttributes = typingAttributes
+                return
+            }
+
+            let selectedAttributes = textView.attributedText.attributes(at: textView.selectedRange.location, effectiveRange: nil)
+            let shouldEnableEmphasis: Bool
+            if emphasisKey == .flintBold {
+                shouldEnableEmphasis = !FlintRichTextCodec.isBold(in: selectedAttributes)
+            } else {
+                shouldEnableEmphasis = !FlintRichTextCodec.isItalic(in: selectedAttributes)
+            }
+
+            mutateSelection(in: textView) { attributed, range in
+                if shouldEnableEmphasis {
+                    attributed.addAttribute(emphasisKey, value: true, range: range)
+                } else {
+                    attributed.removeAttribute(emphasisKey, range: range)
+                }
+            }
+        }
+
+        private func toggleInlineCode(in textView: FlintRichTextView) {
+            mutateSelection(in: textView) { attributed, range in
+                let current = (attributed.attribute(.flintInlineCode, at: max(range.location, 0), effectiveRange: nil) as? Bool) ?? false
+                if current {
+                    attributed.removeAttribute(.flintInlineCode, range: range)
+                } else {
+                    attributed.addAttribute(.flintInlineCode, value: true, range: range)
+                }
+            }
+        }
+
+        private func applyBlockStyle(_ style: FlintBlockStyle, in textView: FlintRichTextView) {
+            let paragraphRange = (textView.attributedText.string as NSString).paragraphRange(for: textView.selectedRange)
+            FlintRichTextCodec.applyBlockStyle(style, to: textView.textStorage, paragraphRange: paragraphRange)
+            textView.typingAttributes = FlintRichTextCodec.defaultTypingAttributes(for: style)
+        }
+
+        private func applyLink(_ string: String, in textView: FlintRichTextView) {
+            guard let url = URL(string: string.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+            mutateSelection(in: textView) { attributed, range in
+                attributed.addAttribute(.link, value: url, range: range)
+            }
+        }
+
+        private func mutateSelection(in textView: FlintRichTextView, mutation: (NSMutableAttributedString, NSRange) -> Void) {
+            let selectedRange = effectiveSelectionRange(in: textView)
+            guard selectedRange.location != NSNotFound, selectedRange.location < max(textView.attributedText.length, 1) else { return }
+            mutation(textView.textStorage, selectedRange)
+            FlintRichTextCodec.normalizeStyling(in: textView.textStorage)
+            textView.selectedRange = selectedRange
+            lastKnownSelectedRange = selectedRange
+        }
+
+        private func refreshStateAndMarkdown(from textView: UITextView) {
+            formattingState = FlintRichTextCodec.formattingState(
+                attributedString: textView.attributedText,
+                selectedRange: textView.selectedRange,
+                undoManager: textView.undoManager,
+                typingAttributes: textView.typingAttributes
+            )
+
+            guard !isApplyingInternalChange else { return }
+            let nextMarkdown = FlintRichTextCodec.markdown(from: textView.attributedText)
+            lastSerializedMarkdown = nextMarkdown
+            if markdown != nextMarkdown {
+                isApplyingInternalChange = true
+                markdown = nextMarkdown
+                isApplyingInternalChange = false
+            }
+
+            (textView as? FlintRichTextView)?.updatePlaceholderVisibility()
+        }
+
+        private func restoreSelectionIfNeeded(in textView: UITextView) {
+            if let preservedSelection = selectionBeforeToolbarInteraction,
+               preservedSelection.location != NSNotFound {
+                let clampedLocation = min(preservedSelection.location, textView.attributedText.length)
+                let clampedLength = min(preservedSelection.length, max(0, textView.attributedText.length - clampedLocation))
+                textView.selectedRange = NSRange(location: clampedLocation, length: clampedLength)
+                lastKnownSelectedRange = textView.selectedRange
+                return
+            }
+
+            guard isEditing, !textView.isFirstResponder else { return }
+            guard lastKnownSelectedRange.location != NSNotFound else { return }
+            let clampedLocation = min(lastKnownSelectedRange.location, textView.attributedText.length)
+            let clampedLength = min(lastKnownSelectedRange.length, max(0, textView.attributedText.length - clampedLocation))
+            textView.selectedRange = NSRange(location: clampedLocation, length: clampedLength)
+        }
+
+        private func effectiveSelectionRange(in textView: UITextView) -> NSRange {
+            if textView.selectedRange.length > 0 {
+                return textView.selectedRange
+            }
+
+            if textView.selectedRange.location != NSNotFound, textView.selectedRange.location < textView.attributedText.length {
+                return NSRange(location: textView.selectedRange.location, length: 1)
+            }
+
+            if lastKnownSelectedRange.length > 0 {
+                return lastKnownSelectedRange
+            }
+
+            let fallbackLocation = max(min(textView.selectedRange.location - 1, textView.attributedText.length - 1), 0)
+            return NSRange(location: fallbackLocation, length: min(1, textView.attributedText.length))
+        }
+
+        func reconcileLayoutMetrics(in textView: FlintRichTextView) {
+            guard !isApplyingInternalChange, !isReconcilingLayoutMetrics else {
+                return
+            }
+
+            let availableWidth = textView.currentAvailableTextWidth()
+            guard availableWidth > 1 else {
+                needsDeferredWidthLoad = true
+                return
+            }
+
+            let surface = textView.surfaceDiagnostics(isEditing: isEditing)
+            let widthChangedSinceLoad = lastLoadedNoteID != nil && abs(lastLoadedAvailableTextWidth - availableWidth) > 0.5
+            let hasOverflow = surface.horizontalOverflow > 0.5 || surface.textContainerOverflow > 0.5
+            let shouldCorrectOverflow = hasOverflow &&
+                !isEditing &&
+                !textView.isTracking &&
+                !textView.isDragging &&
+                !textView.isDecelerating &&
+                abs(lastOverflowCorrectionWidth - availableWidth) > 0.5
+
+            guard needsDeferredWidthLoad || widthChangedSinceLoad || shouldCorrectOverflow else {
+                return
+            }
+
+            guard let currentNoteID = noteID ?? lastLoadedNoteID else {
+                return
+            }
+
+            let isReloadingCurrentNote = currentNoteID == lastLoadedNoteID
+            let preservedOffsetY = textView.contentOffset.y
+            let preservedSelection = textView.selectedRange
+
+            isReconcilingLayoutMetrics = true
+            loadMarkdown(markdown, for: currentNoteID)
+            if shouldCorrectOverflow {
+                lastOverflowCorrectionWidth = availableWidth
+            }
+
+            if isReloadingCurrentNote {
+                if isEditing {
+                    let clampedLocation = min(preservedSelection.location, textView.attributedText.length)
+                    let clampedLength = min(preservedSelection.length, max(0, textView.attributedText.length - clampedLocation))
+                    textView.selectedRange = NSRange(location: clampedLocation, length: clampedLength)
+                    lastKnownSelectedRange = textView.selectedRange
+                } else {
+                    let minimumOffsetY = -textView.adjustedContentInset.top
+                    let maximumOffsetY = max(minimumOffsetY, textView.contentSize.height - textView.bounds.height + textView.adjustedContentInset.bottom)
+                    let clampedOffsetY = min(max(preservedOffsetY, minimumOffsetY), maximumOffsetY)
+                    textView.setContentOffset(CGPoint(x: 0, y: clampedOffsetY), animated: false)
+                }
+            }
+
+            isReconcilingLayoutMetrics = false
         }
     }
 }
 
-extension DocumentPresentationMode {
-    var iconName: String {
+private final class FlintRichTextView: UITextView {
+    var onReadTap: ((CGPoint) -> Void)?
+    var onLayoutMetricsChange: ((FlintRichTextView) -> Void)?
+    var placeholderText: String = "" {
+        didSet {
+            placeholderLabel.text = placeholderText
+        }
+    }
+
+    private let placeholderLabel = UILabel()
+    private let readTapMovementTolerance: CGFloat = 10
+    private var readTouchStartLocation: CGPoint?
+    private var hasExceededReadTapTolerance = false
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let widthChanged = stabilizeScrollGeometry()
+        let diagnostics = surfaceDiagnostics(isEditing: isEditable)
+        if widthChanged || diagnostics.horizontalOverflow > 0.5 || diagnostics.textContainerOverflow > 0.5 {
+            onLayoutMetricsChange?(self)
+        }
+    }
+
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+        setUpPlaceholder()
+        delaysContentTouches = false
+        canCancelContentTouches = true
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setUpPlaceholder()
+        delaysContentTouches = false
+        canCancelContentTouches = true
+    }
+
+    func updatePlaceholderVisibility() {
+        placeholderLabel.isHidden = !text.isEmpty
+    }
+
+    @discardableResult
+    func stabilizeScrollGeometry() -> Bool {
+        let targetWidth = availableTextWidth()
+        var widthChanged = false
+        if targetWidth > 0, abs(textContainer.size.width - targetWidth) > 0.5 {
+            widthChanged = true
+            textContainer.size = CGSize(width: targetWidth, height: .greatestFiniteMagnitude)
+            layoutManager.invalidateLayout(forCharacterRange: NSRange(location: 0, length: textStorage.length), actualCharacterRange: nil)
+            layoutManager.ensureLayout(for: textContainer)
+        }
+
+        if contentOffset.x != 0 {
+            setContentOffset(CGPoint(x: 0, y: contentOffset.y), animated: false)
+        }
+
+        return widthChanged
+    }
+
+    func surfaceDiagnostics(isEditing: Bool) -> RichTextSurfaceDiagnostics {
+        RichTextSurfaceDiagnostics(
+            viewportSize: bounds.size,
+            contentSize: contentSize,
+            contentOffset: contentOffset,
+            adjustedInsets: adjustedContentInset,
+            availableTextWidth: availableTextWidth(),
+            textContainerWidth: textContainer.size.width,
+            selectedRange: selectedRange,
+            isEditing: isEditing,
+            isDragging: isDragging,
+            isDecelerating: isDecelerating,
+            isTracking: isTracking,
+            panState: panGestureRecognizer.state.debugName
+        )
+    }
+
+    private func setUpPlaceholder() {
+        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
+        placeholderLabel.font = UIFont.systemFont(ofSize: 19, weight: .regular)
+        placeholderLabel.textColor = .tertiaryLabel
+        placeholderLabel.numberOfLines = 0
+        addSubview(placeholderLabel)
+        NSLayoutConstraint.activate([
+            placeholderLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 28),
+            placeholderLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -28),
+            placeholderLabel.topAnchor.constraint(equalTo: topAnchor, constant: 34)
+        ])
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if !isEditable, let touch = touches.first {
+            readTouchStartLocation = touch.location(in: self)
+            hasExceededReadTapTolerance = false
+        }
+        super.touchesBegan(touches, with: event)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if !isEditable,
+           let startLocation = readTouchStartLocation,
+           let touch = touches.first {
+            let currentLocation = touch.location(in: self)
+            if abs(currentLocation.x - startLocation.x) > readTapMovementTolerance ||
+                abs(currentLocation.y - startLocation.y) > readTapMovementTolerance {
+                hasExceededReadTapTolerance = true
+            }
+        }
+        super.touchesMoved(touches, with: event)
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        defer {
+            readTouchStartLocation = nil
+            hasExceededReadTapTolerance = false
+            super.touchesEnded(touches, with: event)
+        }
+
+        guard !isEditable,
+              !hasExceededReadTapTolerance,
+              let touch = touches.first else {
+            return
+        }
+
+        let location = touch.location(in: self)
+        if let url = linkURL(at: location) {
+            UIApplication.shared.open(url)
+            return
+        }
+
+        onReadTap?(location)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        readTouchStartLocation = nil
+        hasExceededReadTapTolerance = false
+        super.touchesCancelled(touches, with: event)
+    }
+
+    private func linkURL(at location: CGPoint) -> URL? {
+        guard textStorage.length > 0 else { return nil }
+
+        var fraction: CGFloat = 0
+        let characterIndex = layoutManager.characterIndex(
+            for: location,
+            in: textContainer,
+            fractionOfDistanceBetweenInsertionPoints: &fraction
+        )
+
+        guard characterIndex < textStorage.length else { return nil }
+        return textStorage.attribute(.link, at: characterIndex, effectiveRange: nil) as? URL
+    }
+
+    private func availableTextWidth() -> CGFloat {
+        max(bounds.width - adjustedContentInset.left - adjustedContentInset.right - textContainerInset.left - textContainerInset.right, 0)
+    }
+
+    func currentAvailableTextWidth() -> CGFloat {
+        availableTextWidth()
+    }
+}
+
+private extension UIGestureRecognizer.State {
+    var debugName: String {
         switch self {
-        case .rendered:
-            return "doc.richtext"
-        case .markdown:
-            return "chevron.left.forwardslash.chevron.right"
+        case .possible:
+            return "possible"
+        case .began:
+            return "began"
+        case .changed:
+            return "changed"
+        case .ended:
+            return "ended"
+        case .cancelled:
+            return "cancelled"
+        case .failed:
+            return "failed"
+        @unknown default:
+            return "unknown"
         }
     }
 }
