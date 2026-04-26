@@ -36,6 +36,10 @@ struct VaultFolder: Identifiable, Hashable {
         return match.folder(at: components.dropFirst())
     }
 
+    func resolvedPathComponents(for components: [String]) -> [String] {
+        folder(at: components[...])?.breadcrumbComponents ?? []
+    }
+
     static func root(vaultName: String, notes: [NoteItem]) -> VaultFolder {
         var root = FolderAccumulator()
 

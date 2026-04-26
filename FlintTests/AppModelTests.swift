@@ -342,6 +342,22 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(root.childFolders.first?.childFolders.first?.name, "iOS")
         XCTAssertEqual(root.childFolders.first?.childFolders.first?.notes.map(\.title), ["Runbook", "API"])
     }
+
+    func testVaultFolderResolvedPathComponentsFallsBackToRootForMissingFolder() {
+        let notes = [
+            makeNote(
+                title: "Runbook",
+                url: URL(fileURLWithPath: "/tmp/vault/Projects/iOS/runbook.md"),
+                folderPath: "Projects/iOS",
+                createdAt: .init(timeIntervalSince1970: 300)
+            )
+        ]
+
+        let root = VaultFolder.root(vaultName: "Flint Vault", notes: notes)
+
+        XCTAssertEqual(root.resolvedPathComponents(for: ["Projects", "iOS"]), ["Projects", "iOS"])
+        XCTAssertEqual(root.resolvedPathComponents(for: ["Projects", "Missing"]), [])
+    }
 }
 
 private final class BookmarkStoreSpy: VaultBookmarkStoring {

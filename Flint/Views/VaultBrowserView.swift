@@ -37,9 +37,13 @@ struct VaultBrowserView: View {
         splitView
             .onAppear {
                 selectedNoteURL = model.selectedNote?.url
+                normalizeFolderPathComponents()
             }
             .onChange(of: browserMode) { _, newValue in
                 handleBrowserModeChange(newValue)
+            }
+            .onChange(of: model.notes) { _, _ in
+                normalizeFolderPathComponents()
             }
             .onChange(of: model.selectedNote?.url) { _, newValue in
                 syncSelectedNoteURL(newValue)
@@ -184,11 +188,13 @@ struct VaultBrowserView: View {
     private func handleBrowserModeChange(_ newValue: BrowserMode) {
         if newValue == .recent {
             folderPathComponents = []
+        } else {
+            normalizeFolderPathComponents()
         }
     }
 
     private var createNoteFolderPathComponents: [String] {
-        browserMode == .folders ? folderPathComponents : []
+        browserMode == .folders ? resolvedFolderPathComponents : []
     }
 
     private var createNoteLocationDescription: String {
@@ -220,8 +226,12 @@ struct VaultBrowserView: View {
         VaultFolder.root(vaultName: model.activeVault?.name ?? "Vault", notes: model.notes)
     }
 
+    private var resolvedFolderPathComponents: [String] {
+        folderTree.resolvedPathComponents(for: folderPathComponents)
+    }
+
     private var currentFolder: VaultFolder? {
-        folderTree.folder(at: folderPathComponents[...])
+        folderTree.folder(at: resolvedFolderPathComponents[...])
     }
 
     @ViewBuilder
@@ -310,6 +320,12 @@ struct VaultBrowserView: View {
     private func navigateBackFromFolder() {
         guard !folderPathComponents.isEmpty else { return }
         folderPathComponents.removeLast()
+    }
+
+    private func normalizeFolderPathComponents() {
+        let resolvedPathComponents = folderTree.resolvedPathComponents(for: folderPathComponents)
+        guard resolvedPathComponents != folderPathComponents else { return }
+        folderPathComponents = resolvedPathComponents
     }
 }
 
