@@ -21,6 +21,25 @@ The system SHALL list markdown files found anywhere inside the active vault.
 - AND notes within each folder are ordered by file creation date with the newest note first
 - AND ties fall back to localized case-insensitive relative-path ordering
 
+### Requirement: Show styled note previews in note lists
+
+The system SHALL present a compact markdown-aware preview for each listed note so the sidebar matches the rendered document style instead of showing a flattened raw text dump.
+
+#### Scenario: Render a markdown-aware preview in the recent notes list
+
+- GIVEN a note contains markdown headings, emphasis, or list items
+- WHEN Flint shows that note in the recent notes list
+- THEN Flint displays a short preview excerpt that preserves meaningful markdown structure where space allows
+- AND Flint omits a duplicated title heading when the note starts with a heading that matches the note title
+- AND Flint styles the preview as secondary supporting content within the same card language used elsewhere in the app
+
+#### Scenario: Render a markdown-aware preview in the folder note list
+
+- GIVEN a note contains markdown content
+- WHEN Flint shows that note in the folder browser list
+- THEN Flint displays the same formatted preview treatment used by the recent notes list
+- AND Flint truncates the preview to fit the list row without spilling into a full document rendering
+
 ### Requirement: Auto-select an available note
 
 The system SHALL select a note automatically when notes exist and no current selection can be preserved.

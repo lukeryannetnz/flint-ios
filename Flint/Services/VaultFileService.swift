@@ -83,7 +83,7 @@ final class VaultFileService: VaultFileServing {
                     let normalizedFolderPath = relativeFolderPath
                         .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                     let resourceValues = try? url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
-                    let previewText = (try? makePreviewText(for: url)) ?? ""
+                    let previewMarkdown = (try? makePreviewMarkdown(for: url)) ?? ""
 
                     return NoteItem(
                         url: url,
@@ -91,7 +91,7 @@ final class VaultFileService: VaultFileServing {
                         relativePath: relativePath,
                         folderPath: normalizedFolderPath,
                         folderName: normalizedFolderPath.components(separatedBy: "/").last.flatMap { $0.isEmpty ? nil : $0 } ?? "Vault",
-                        previewText: previewText,
+                        previewMarkdown: previewMarkdown,
                         createdAt: resourceValues?.creationDate ?? .distantPast,
                         lastModifiedAt: resourceValues?.contentModificationDate ?? .distantPast
                     )
@@ -162,17 +162,107 @@ final class VaultFileService: VaultFileServing {
         return trimmed.lowercased().hasSuffix(".md") ? trimmed : "\(trimmed).md"
     }
 
-    private func makePreviewText(for url: URL) throws -> String {
+    private func makePreviewMarkdown(for url: URL) throws -> String {
         let contents = try String(contentsOf: url, encoding: .utf8)
-        let condensed = contents
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = MarkdownDocument.normalizedMarkdown(
+            noteTitle: url.deletingPathExtension().lastPathComponent,
+            markdown: contents
+        )
+        let lines = normalized.components(separatedBy: .newlines)
+        var previewLines: [String] = []
+        var characterCount = 0
+        var isInsideCodeFence = false
 
-        return String(condensed.prefix(180))
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let fence = fencedCodeDelimiter(in: trimmed) {
+                isInsideCodeFence.toggle()
+                if isInsideCodeFence, previewLines.isEmpty {
+                    previewLines.append("`\(fence)`")
+                    characterCount += fence.count + 2
+                }
+                continue
+            }
+
+            guard !isInsideCodeFence else { continue }
+
+            if trimmed.isEmpty {
+                if !previewLines.isEmpty, previewLines.last != "" {
+                    previewLines.append("")
+                }
+                continue
+            }
+
+            if isTableSeparator(trimmed) {
+                continue
+            }
+
+            let previewLine = previewDisplayLine(for: trimmed)
+            guard !previewLine.isEmpty else { continue }
+
+            let separatorCost = previewLines.isEmpty ? 0 : 1
+            if characterCount + previewLine.count + separatorCost > 220 {
+                break
+            }
+
+            previewLines.append(previewLine)
+            characterCount += previewLine.count + separatorCost
+
+            if previewLines.count >= 4 {
+                break
+            }
+        }
+
+        while previewLines.last == "" {
+            previewLines.removeLast()
+        }
+
+        return previewLines.joined(separator: "\n")
+    }
+
+    private func previewDisplayLine(for line: String) -> String {
+        if let headingRange = line.range(of: #"^#{1,6}\s+"#, options: .regularExpression) {
+            let heading = line[headingRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            return heading.isEmpty ? "" : "**\(heading)**"
+        }
+
+        if let checkboxMatch = line.range(of: #"^[-*]\s+\[( |x|X)\]\s+"#, options: .regularExpression) {
+            let checkboxToken = line[checkboxMatch].lowercased()
+            let marker = checkboxToken.contains("[x]") ? "✓" : "○"
+            let content = line[checkboxMatch.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            return content.isEmpty ? "" : "\(marker) \(content)"
+        }
+
+        if let bulletRange = line.range(of: #"^[-*]\s+"#, options: .regularExpression) {
+            let content = line[bulletRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            return content.isEmpty ? "" : "• \(content)"
+        }
+
+        if let orderedRange = line.range(of: #"^(\d+)\.\s+"#, options: .regularExpression) {
+            let prefix = String(line[..<orderedRange.upperBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let content = line[orderedRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            return content.isEmpty ? "" : "\(prefix) \(content)"
+        }
+
+        if let quoteRange = line.range(of: #"^>\s*"#, options: .regularExpression) {
+            let content = line[quoteRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            return content.isEmpty ? "" : "_\(content)_"
+        }
+
+        return line
+    }
+
+    private func fencedCodeDelimiter(in line: String) -> String? {
+        if line.hasPrefix("```") { return "```" }
+        if line.hasPrefix("~~~") { return "~~~" }
+        return nil
+    }
+
+    private func isTableSeparator(_ line: String) -> Bool {
+        line.contains("|") &&
+            line
+            .replacingOccurrences(of: "|", with: "")
+            .allSatisfy { $0 == "-" || $0 == ":" || $0 == " " }
     }
 
     private func coordinatedRead<T>(at url: URL, accessor: (URL) throws -> T) throws -> T {
