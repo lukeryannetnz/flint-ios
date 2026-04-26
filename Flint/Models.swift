@@ -11,7 +11,7 @@ struct NoteItem: Identifiable, Hashable {
     let relativePath: String
     let folderPath: String
     let folderName: String
-    let previewText: String
+    let previewMarkdown: String
     let createdAt: Date
     let lastModifiedAt: Date
 
@@ -84,6 +84,24 @@ private struct FolderAccumulator {
 }
 
 extension NoteItem {
+    var previewAttributedText: AttributedString? {
+        guard !previewMarkdown.isEmpty else { return nil }
+        return try? AttributedString(
+            markdown: previewMarkdown,
+            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )
+    }
+
+    var previewFallbackText: String {
+        guard !previewMarkdown.isEmpty else { return "No preview available yet." }
+        return previewMarkdown
+            .replacingOccurrences(of: "\\*\\*", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "__", with: "")
+            .replacingOccurrences(of: "\\*", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "`", with: "")
+    }
+
     var folderComponents: [String] {
         guard !folderPath.isEmpty else { return [] }
         return folderPath.components(separatedBy: "/")
@@ -105,11 +123,15 @@ struct MarkdownDocument: Hashable {
     let html: String
 
     init(noteTitle: String, markdown: String) {
-        let sanitizedLines = markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
-        let lines = MarkdownDocument.removingDuplicatedTitle(from: sanitizedLines, noteTitle: noteTitle)
-        let normalizedMarkdown = lines.joined(separator: "\n")
+        let normalizedMarkdown = MarkdownDocument.normalizedMarkdown(noteTitle: noteTitle, markdown: markdown)
         self.markdown = normalizedMarkdown
         html = MarkdownHTMLCache.shared.html(for: normalizedMarkdown)
+    }
+
+    static func normalizedMarkdown(noteTitle: String, markdown: String) -> String {
+        let sanitizedLines = markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        let lines = removingDuplicatedTitle(from: sanitizedLines, noteTitle: noteTitle)
+        return lines.joined(separator: "\n")
     }
 
     private static func removingDuplicatedTitle(from lines: [String], noteTitle: String) -> [String] {

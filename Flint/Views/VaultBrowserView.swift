@@ -264,10 +264,16 @@ struct VaultBrowserView: View {
                         } label: {
                             FolderDrilldownRow(folder: folder)
                         }
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                     }
 
                     ForEach(currentFolder.notes) { note in
                         FolderNoteRow(note: note)
+                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
                             .tag(note.url)
                     }
                 }
@@ -499,30 +505,27 @@ private struct RecentNoteCard: View {
     let note: NoteItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(note.folderPath.isEmpty ? "Top level" : note.folderPath)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+        NoteListCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(note.folderPath.isEmpty ? "Top level" : note.folderPath)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
 
-            Text(note.title)
-                .font(.headline)
-                .foregroundStyle(.primary)
+                    Spacer(minLength: 8)
 
-            Text(note.previewText.isEmpty ? "No preview available yet." : note.previewText)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(3)
+                    Text(note.lastEditedDisplayText)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
 
-            Text(note.lastEditedDisplayText)
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                Text(note.title)
+                    .font(.system(.title3, design: .serif, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                NotePreviewText(note: note, lineLimit: 4)
+            }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(uiColor: .secondarySystemGroupedBackground))
-        )
     }
 }
 
@@ -530,18 +533,73 @@ private struct FolderNoteRow: View {
     let note: NoteItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(note.title)
-                .font(.headline.weight(.medium))
-            Text(note.previewText.isEmpty ? "No preview available yet." : note.previewText)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(3)
-            Text(note.lastEditedDisplayText)
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+        NoteListCard(cornerRadius: 16, padding: 14) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(note.title)
+                        .font(.system(.headline, design: .serif, weight: .semibold))
+                        .foregroundStyle(.primary)
+
+                    Spacer(minLength: 8)
+
+                    Text(note.lastEditedDisplayText)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+
+                NotePreviewText(note: note, lineLimit: 3)
+            }
         }
-        .padding(.vertical, 2)
+    }
+}
+
+private struct NotePreviewText: View {
+    let note: NoteItem
+    let lineLimit: Int
+
+    var body: some View {
+        Group {
+            if let preview = note.previewAttributedText {
+                Text(preview)
+            } else {
+                Text(note.previewFallbackText)
+            }
+        }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .lineLimit(lineLimit)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct NoteListCard<Content: View>: View {
+    let cornerRadius: CGFloat
+    let padding: CGFloat
+    let content: Content
+
+    init(
+        cornerRadius: CGFloat = 18,
+        padding: CGFloat = 16,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.cornerRadius = cornerRadius
+        self.padding = padding
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .padding(padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Color(uiColor: .secondarySystemGroupedBackground))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(Color.primary.opacity(0.05), lineWidth: 1)
+            )
     }
 }
 

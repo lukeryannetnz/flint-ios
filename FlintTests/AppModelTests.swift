@@ -217,7 +217,7 @@ private func makeNote(
         relativePath: folderPath.isEmpty ? "\(title).md" : "\(folderPath)/\(title).md",
         folderPath: folderPath,
         folderName: folderPath.components(separatedBy: "/").last.flatMap { $0.isEmpty ? nil : $0 } ?? "Vault",
-        previewText: "Preview for \(title)",
+        previewMarkdown: "Preview for \(title)",
         createdAt: createdAt,
         lastModifiedAt: modifiedAt
     )
