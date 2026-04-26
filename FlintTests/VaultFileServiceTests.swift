@@ -40,7 +40,7 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertEqual(notes.map(\.relativePath), ["Daily Note.md"])
         XCTAssertEqual(notes.first?.folderPath, "")
         XCTAssertEqual(notes.first?.folderName, "Vault")
-        XCTAssertEqual(notes.first?.previewText, "# Daily Note Updated body")
+        XCTAssertEqual(notes.first?.previewMarkdown, "Updated body")
         XCTAssertEqual(try service.readNote(at: noteURL), "# Daily Note\nUpdated body")
     }
 
@@ -93,8 +93,50 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertEqual(notes.map(\.title), ["Beta", "Alpha"])
         XCTAssertEqual(notes.first?.folderPath, "Projects")
         XCTAssertEqual(notes.first?.folderName, "Projects")
-        XCTAssertEqual(notes.first?.previewText, "# Beta second note body")
+        XCTAssertEqual(notes.first?.previewMarkdown, "second note body")
         XCTAssertEqual(notes.first?.createdAt, newerCreationDate)
         XCTAssertEqual(notes.first?.lastModifiedAt, newerModifiedDate)
+    }
+
+    func testListMarkdownNotesBuildsMarkdownAwarePreviewExcerpt() throws {
+        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+        let noteURL = vaultURL.appendingPathComponent("Daily.md")
+
+        try """
+        # Daily
+
+        Intro with **bold** text.
+
+        - [x] Done
+        - [ ] Next
+        > Quoted thought
+        """.write(to: noteURL, atomically: true, encoding: .utf8)
+
+        let notes = try service.listMarkdownNotes(in: vaultURL)
+
+        XCTAssertEqual(
+            notes.first?.previewMarkdown,
+            """
+            Intro with **bold** text.
+
+            ✓ Done
+            ○ Next
+            """
+        )
+    }
+
+    func testListMarkdownNotesDoesNotMisreadUncheckedTaskContentAsChecked() throws {
+        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+        let noteURL = vaultURL.appendingPathComponent("Tasks.md")
+
+        try """
+        # Tasks
+
+        - [ ] mention [x] syntax
+        """.write(to: noteURL, atomically: true, encoding: .utf8)
+
+        let notes = try service.listMarkdownNotes(in: vaultURL)
+
+        XCTAssertEqual(notes.first?.previewMarkdown, "○ mention [x] syntax")
     }
 }
