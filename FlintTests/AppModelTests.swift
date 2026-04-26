@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import Flint
 
 @MainActor
@@ -133,6 +134,87 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(serialized.contains("> stay native"))
         XCTAssertTrue(serialized.contains("```"))
         XCTAssertTrue(serialized.contains("print(\"done\")"))
+    }
+
+    func testRichTextCodecResolvesAndRoundTripsMarkdownImages() throws {
+        let vaultURL = URL(fileURLWithPath: "/tmp/vault", isDirectory: true)
+        let noteURL = vaultURL.appendingPathComponent("Notes/Daily.md")
+        let attributed = FlintRichTextCodec.attributedString(
+            from: "![Diagram](/Attachments/diagram.heic)",
+            noteURL: noteURL,
+            vaultURL: vaultURL
+        )
+
+        let markdownSource = attributed.attribute(.flintImageMarkdownSource, at: 0, effectiveRange: nil) as? String
+        let assetURL = attributed.attribute(.flintImageAssetURL, at: 0, effectiveRange: nil) as? URL
+
+        XCTAssertEqual(markdownSource, "![Diagram](/Attachments/diagram.heic)")
+        XCTAssertEqual(assetURL, vaultURL.appendingPathComponent("Attachments/diagram.heic"))
+        XCTAssertEqual(FlintRichTextCodec.markdown(from: attributed), "![Diagram](/Attachments/diagram.heic)")
+    }
+
+    func testRichTextCodecCreatesAttachmentAndCaptionForStandaloneImageMarkdown() {
+        let vaultURL = URL(fileURLWithPath: "/tmp/vault", isDirectory: true)
+        let noteURL = vaultURL.appendingPathComponent("Notes/Daily.md")
+        let attributed = FlintRichTextCodec.attributedString(
+            from: "![System Diagram](../Attachments/diagram.jpg)",
+            noteURL: noteURL,
+            vaultURL: vaultURL
+        )
+
+        XCTAssertTrue(attributed.attribute(.attachment, at: 0, effectiveRange: nil) is FlintMarkdownImageAttachment)
+        XCTAssertEqual(attributed.string, "\(Character(UnicodeScalar(NSTextAttachment.character)!))\nSystem Diagram")
+
+        let captionRange = (attributed.string as NSString).range(of: "System Diagram")
+        XCTAssertEqual(
+            attributed.attribute(.flintSyntheticImageCaption, at: captionRange.location, effectiveRange: nil) as? Bool,
+            true
+        )
+    }
+
+    func testImportImageUsesSelectedNoteAndVaultContext() async {
+        let bookmarkStore = BookmarkStoreSpy()
+        let fileService = FileServiceSpy()
+        let noteURL = URL(fileURLWithPath: "/tmp/default-vault/Daily.md")
+        let note = makeNote(title: "Daily", url: noteURL)
+        let sourceURL = URL(fileURLWithPath: "/tmp/imports/diagram.heic")
+        fileService.notesToReturn = [note]
+
+        let model = AppModel(bookmarkStore: bookmarkStore, fileService: fileService)
+        await model.openVault(at: fileService.createdVaultURL)
+        await model.openNote(note)
+
+        let inserted = await model.importImage(from: sourceURL, preferredFilename: "Diagram")
+
+        XCTAssertEqual(fileService.importedImages.count, 1)
+        XCTAssertEqual(fileService.importedImages.first?.0, sourceURL)
+        XCTAssertEqual(fileService.importedImages.first?.1, "Diagram")
+        XCTAssertEqual(fileService.importedImages.first?.2, noteURL)
+        XCTAssertEqual(fileService.importedImages.first?.3, fileService.createdVaultURL)
+        XCTAssertEqual(inserted?.markdownSource, "![Imported](Daily Assets/imported.jpg)")
+    }
+
+    func testImportCameraImageUsesSelectedNoteAndVaultContext() async {
+        let bookmarkStore = BookmarkStoreSpy()
+        let fileService = FileServiceSpy()
+        let noteURL = URL(fileURLWithPath: "/tmp/default-vault/Daily.md")
+        let note = makeNote(title: "Daily", url: noteURL)
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 12, height: 12)).image { context in
+            UIColor.systemGreen.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 12, height: 12))
+        }
+        fileService.notesToReturn = [note]
+
+        let model = AppModel(bookmarkStore: bookmarkStore, fileService: fileService)
+        await model.openVault(at: fileService.createdVaultURL)
+        await model.openNote(note)
+
+        let inserted = await model.importCameraImage(image)
+
+        XCTAssertEqual(fileService.importedCameraImages.count, 1)
+        XCTAssertEqual(fileService.importedCameraImages.first?.1, noteURL)
+        XCTAssertEqual(fileService.importedCameraImages.first?.2, fileService.createdVaultURL)
+        XCTAssertEqual(inserted?.markdownSource, "![Camera](Daily Assets/camera.jpg)")
     }
 
     func testRichTextCodecTracksSemanticBoldAndItalicAttributes() {
@@ -296,6 +378,8 @@ private final class FileServiceSpy: VaultFileServing {
     var createVaultCalls: [(String, URL)] = []
     var listMarkdownNotesCalls: [URL] = []
     var savedNotes: [(String, URL)] = []
+    var importedImages: [(URL, String?, URL, URL)] = []
+    var importedCameraImages: [(UIImage, URL, URL)] = []
 
     func createVault(named name: String, in parentURL: URL) throws -> URL {
         createVaultCalls.append((name, parentURL))
@@ -320,6 +404,24 @@ private final class FileServiceSpy: VaultFileServing {
 
     func saveNote(_ text: String, at url: URL) throws {
         savedNotes.append((text, url))
+    }
+
+    func importImage(from sourceURL: URL, preferredFilename: String?, into noteURL: URL, vaultURL: URL) throws -> InsertedNoteImage {
+        importedImages.append((sourceURL, preferredFilename, noteURL, vaultURL))
+        return InsertedNoteImage(
+            markdownSource: "![Imported](Daily Assets/imported.jpg)",
+            assetURL: noteURL.deletingLastPathComponent().appendingPathComponent("Daily Assets/imported.jpg"),
+            altText: "Imported"
+        )
+    }
+
+    func importCameraImage(_ image: UIImage, into noteURL: URL, vaultURL: URL) throws -> InsertedNoteImage {
+        importedCameraImages.append((image, noteURL, vaultURL))
+        return InsertedNoteImage(
+            markdownSource: "![Camera](Daily Assets/camera.jpg)",
+            assetURL: noteURL.deletingLastPathComponent().appendingPathComponent("Daily Assets/camera.jpg"),
+            altText: "Camera"
+        )
     }
 }
 

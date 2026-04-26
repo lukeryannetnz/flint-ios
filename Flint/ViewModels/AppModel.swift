@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -145,6 +146,37 @@ final class AppModel: ObservableObject {
             hasUnsavedChanges = false
         } catch {
             alertMessage = error.localizedDescription
+        }
+    }
+
+    func importImage(from sourceURL: URL, preferredFilename: String? = nil) async -> InsertedNoteImage? {
+        guard let selectedNote, let vaultURL = activeVault?.url else { return nil }
+        isBusy = true
+        defer { isBusy = false }
+
+        do {
+            return try fileService.importImage(
+                from: sourceURL,
+                preferredFilename: preferredFilename,
+                into: selectedNote.url,
+                vaultURL: vaultURL
+            )
+        } catch {
+            alertMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    func importCameraImage(_ image: UIImage) async -> InsertedNoteImage? {
+        guard let selectedNote, let vaultURL = activeVault?.url else { return nil }
+        isBusy = true
+        defer { isBusy = false }
+
+        do {
+            return try fileService.importCameraImage(image, into: selectedNote.url, vaultURL: vaultURL)
+        } catch {
+            alertMessage = error.localizedDescription
+            return nil
         }
     }
 

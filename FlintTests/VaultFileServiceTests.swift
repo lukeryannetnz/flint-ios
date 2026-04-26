@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import Flint
 
 final class VaultFileServiceTests: XCTestCase {
@@ -112,5 +113,58 @@ final class VaultFileServiceTests: XCTestCase {
         let notes = try service.listMarkdownNotes(in: vaultURL)
 
         XCTAssertEqual(notes.first?.previewMarkdown, "○ mention [x] syntax")
+    }
+
+    func testResolveImageURLSupportsVaultRootedAndRelativePathsWithinVault() throws {
+        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+        let noteURL = vaultURL.appendingPathComponent("Notes/Daily.md")
+
+        let rootResolved = VaultFileService.resolveImageURL(
+            markdownPath: "/Attachments/diagram.heic",
+            noteURL: noteURL,
+            vaultURL: vaultURL
+        )
+        let relativeResolved = VaultFileService.resolveImageURL(
+            markdownPath: "../Shared/diagram.jpg",
+            noteURL: noteURL,
+            vaultURL: vaultURL.appendingPathComponent("Notes", isDirectory: true)
+        )
+
+        XCTAssertEqual(rootResolved, vaultURL.appendingPathComponent("Attachments/diagram.heic"))
+        XCTAssertNil(relativeResolved)
+    }
+
+    func testImportCameraImageCreatesManagedJPEGReference() throws {
+        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+        let noteURL = try service.createNote(named: "Daily", in: vaultURL)
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 24, height: 24)).image { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 24, height: 24))
+        }
+
+        let inserted = try service.importCameraImage(image, into: noteURL, vaultURL: vaultURL)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: inserted.assetURL.path))
+        XCTAssertEqual(inserted.assetURL.pathExtension.lowercased(), "jpg")
+        XCTAssertTrue(inserted.markdownSource.contains("![")) 
+        XCTAssertTrue(inserted.markdownSource.contains("Daily Assets/"))
+    }
+
+    func testImportImagePreservesReadableSourceFormatAndCreatesRelativeMarkdownReference() throws {
+        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+        let noteFolderURL = vaultURL.appendingPathComponent("Notes", isDirectory: true)
+        try FileManager.default.createDirectory(at: noteFolderURL, withIntermediateDirectories: true)
+        let noteURL = noteFolderURL.appendingPathComponent("Daily.md")
+        try "".write(to: noteURL, atomically: true, encoding: .utf8)
+
+        let sourceURL = temporaryDirectoryURL.appendingPathComponent("diagram.heic")
+        try Data("heic".utf8).write(to: sourceURL)
+
+        let inserted = try service.importImage(from: sourceURL, preferredFilename: "System Diagram", into: noteURL, vaultURL: vaultURL)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: inserted.assetURL.path))
+        XCTAssertEqual(inserted.assetURL.pathExtension.lowercased(), "heic")
+        XCTAssertEqual(inserted.altText, "System Diagram")
+        XCTAssertEqual(inserted.markdownSource, "![System Diagram](Daily Assets/System Diagram.heic)")
     }
 }

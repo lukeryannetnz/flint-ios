@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 enum VaultError: LocalizedError, Equatable {
     case emptyName
@@ -29,6 +30,8 @@ protocol VaultFileServing {
     func createNote(named name: String, in vaultURL: URL) throws -> URL
     func readNote(at url: URL) throws -> String
     func saveNote(_ text: String, at url: URL) throws
+    func importImage(from sourceURL: URL, preferredFilename: String?, into noteURL: URL, vaultURL: URL) throws -> InsertedNoteImage
+    func importCameraImage(_ image: UIImage, into noteURL: URL, vaultURL: URL) throws -> InsertedNoteImage
 }
 
 final class VaultFileService: VaultFileServing {
@@ -140,6 +143,56 @@ final class VaultFileService: VaultFileServing {
             }
 
             try text.write(to: coordinatedURL, atomically: true, encoding: .utf8)
+        }
+    }
+
+    func importImage(from sourceURL: URL, preferredFilename: String?, into noteURL: URL, vaultURL: URL) throws -> InsertedNoteImage {
+        try coordinatedWrite(at: vaultURL) { coordinatedVaultURL in
+            let assetFolderURL = noteAssetFolderURL(for: noteURL)
+            try fileManager.createDirectory(at: assetFolderURL, withIntermediateDirectories: true)
+
+            let preferredBaseName = preferredFilename ?? sourceURL.deletingPathExtension().lastPathComponent
+            let pathExtension = sourceURL.pathExtension.isEmpty ? "jpg" : sourceURL.pathExtension.lowercased()
+            let targetURL = try uniqueAssetURL(in: assetFolderURL, preferredBaseName: preferredBaseName, pathExtension: pathExtension)
+
+            if fileManager.fileExists(atPath: targetURL.path) {
+                try fileManager.removeItem(at: targetURL)
+            }
+            try fileManager.copyItem(at: sourceURL, to: targetURL)
+
+            let relativePath = relativeMarkdownPath(from: noteURL, to: targetURL)
+            let altText = displayAltText(from: preferredBaseName)
+            let markdownSource = "![\(altText)](\(relativePath))"
+
+            guard Self.resolveImageURL(markdownPath: relativePath, noteURL: noteURL, vaultURL: coordinatedVaultURL) != nil else {
+                throw VaultError.inaccessibleVault
+            }
+
+            return InsertedNoteImage(markdownSource: markdownSource, assetURL: targetURL, altText: altText)
+        }
+    }
+
+    func importCameraImage(_ image: UIImage, into noteURL: URL, vaultURL: URL) throws -> InsertedNoteImage {
+        try coordinatedWrite(at: vaultURL) { coordinatedVaultURL in
+            let assetFolderURL = noteAssetFolderURL(for: noteURL)
+            try fileManager.createDirectory(at: assetFolderURL, withIntermediateDirectories: true)
+
+            let preferredBaseName = "Photo \(timestampFormatter.string(from: Date()))"
+            let targetURL = try uniqueAssetURL(in: assetFolderURL, preferredBaseName: preferredBaseName, pathExtension: "jpg")
+            guard let jpegData = image.jpegData(compressionQuality: 0.9) else {
+                throw VaultError.inaccessibleVault
+            }
+            try jpegData.write(to: targetURL, options: .atomic)
+
+            let relativePath = relativeMarkdownPath(from: noteURL, to: targetURL)
+            let altText = displayAltText(from: preferredBaseName)
+            let markdownSource = "![\(altText)](\(relativePath))"
+
+            guard Self.resolveImageURL(markdownPath: relativePath, noteURL: noteURL, vaultURL: coordinatedVaultURL) != nil else {
+                throw VaultError.inaccessibleVault
+            }
+
+            return InsertedNoteImage(markdownSource: markdownSource, assetURL: targetURL, altText: altText)
         }
     }
 
@@ -265,6 +318,63 @@ final class VaultFileService: VaultFileServing {
             .allSatisfy { $0 == "-" || $0 == ":" || $0 == " " }
     }
 
+    private func noteAssetFolderURL(for noteURL: URL) -> URL {
+        let noteDirectoryURL = noteURL.deletingLastPathComponent()
+        let noteName = noteURL.deletingPathExtension().lastPathComponent
+        return noteDirectoryURL.appendingPathComponent("\(noteName) Assets", isDirectory: true)
+    }
+
+    private func uniqueAssetURL(in directoryURL: URL, preferredBaseName: String, pathExtension: String) throws -> URL {
+        let sanitizedBaseName = try validatedDisplayName(preferredBaseName.replacingOccurrences(of: ".", with: " "))
+        let trimmedExtension = pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseExtension = trimmedExtension.isEmpty ? "jpg" : trimmedExtension
+
+        var candidateURL = directoryURL.appendingPathComponent("\(sanitizedBaseName).\(baseExtension)", isDirectory: false)
+        var suffix = 2
+
+        while fileManager.fileExists(atPath: candidateURL.path) {
+            candidateURL = directoryURL.appendingPathComponent("\(sanitizedBaseName) \(suffix).\(baseExtension)", isDirectory: false)
+            suffix += 1
+        }
+
+        return candidateURL
+    }
+
+    private func relativeMarkdownPath(from noteURL: URL, to assetURL: URL) -> String {
+        let noteDirectoryURL = noteURL.deletingLastPathComponent().standardizedFileURL
+        let standardizedAssetURL = assetURL.standardizedFileURL
+
+        if standardizedAssetURL.deletingLastPathComponent() == noteDirectoryURL {
+            return standardizedAssetURL.lastPathComponent
+        }
+
+        let notePathComponents = noteDirectoryURL.pathComponents
+        let assetPathComponents = standardizedAssetURL.pathComponents
+
+        var sharedPrefixCount = 0
+        while sharedPrefixCount < notePathComponents.count &&
+                sharedPrefixCount < assetPathComponents.count &&
+                notePathComponents[sharedPrefixCount] == assetPathComponents[sharedPrefixCount] {
+            sharedPrefixCount += 1
+        }
+
+        let parentTraversal = Array(repeating: "..", count: max(notePathComponents.count - sharedPrefixCount, 0))
+        let remainingComponents = Array(assetPathComponents.dropFirst(sharedPrefixCount))
+        return (parentTraversal + remainingComponents).joined(separator: "/")
+    }
+
+    private func displayAltText(from baseName: String) -> String {
+        let trimmed = baseName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Image" }
+        return trimmed.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ")
+    }
+
+    private var timestampFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        return formatter
+    }
+
     private func coordinatedRead<T>(at url: URL, accessor: (URL) throws -> T) throws -> T {
         let coordinator = NSFileCoordinator()
         var coordinationError: NSError?
@@ -307,5 +417,42 @@ final class VaultFileService: VaultFileServing {
         }
 
         return try result.get()
+    }
+
+    static func resolveImageURL(markdownPath: String, noteURL: URL, vaultURL: URL) -> URL? {
+        let trimmed = markdownPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let cleanedPath = cleanedMarkdownPath(trimmed)
+        if let url = URL(string: cleanedPath), url.scheme != nil {
+            return nil
+        }
+
+        let standardizedVaultURL = vaultURL.standardizedFileURL
+        let candidateURL: URL
+        if cleanedPath.hasPrefix("/") {
+            candidateURL = standardizedVaultURL.appendingPathComponent(String(cleanedPath.dropFirst()), isDirectory: false)
+        } else {
+            candidateURL = noteURL.deletingLastPathComponent().appendingPathComponent(cleanedPath, isDirectory: false)
+        }
+
+        let standardizedCandidate = candidateURL.standardizedFileURL
+        let vaultPath = standardizedVaultURL.path
+        let candidatePath = standardizedCandidate.path
+        guard candidatePath == vaultPath || candidatePath.hasPrefix(vaultPath + "/") else {
+            return nil
+        }
+
+        return standardizedCandidate
+    }
+
+    private static func cleanedMarkdownPath(_ path: String) -> String {
+        let withoutAngles: String
+        if path.hasPrefix("<"), path.hasSuffix(">") {
+            withoutAngles = String(path.dropFirst().dropLast())
+        } else {
+            withoutAngles = path
+        }
+        return withoutAngles.removingPercentEncoding ?? withoutAngles
     }
 }
