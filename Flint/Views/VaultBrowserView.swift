@@ -153,9 +153,16 @@ struct VaultBrowserView: View {
     private var createNoteSheet: some View {
         NavigationStack {
             Form {
-                TextField("Note name", text: $noteName)
-                    .textInputAutocapitalization(.words)
-                    .autocorrectionDisabled()
+                Section {
+                    TextField("Note name", text: $noteName)
+                        .textInputAutocapitalization(.words)
+                        .autocorrectionDisabled()
+                }
+
+                Section("Location") {
+                    Text(createNoteLocationDescription)
+                        .foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("New Note")
             .toolbar {
@@ -169,11 +176,12 @@ struct VaultBrowserView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Create") {
                         let newName = noteName
+                        let targetFolderPathComponents = createNoteFolderPathComponents
                         noteName = ""
                         isShowingCreateNoteSheet = false
 
                         Task {
-                            await model.createNote(named: newName)
+                            await model.createNote(named: newName, inFolderPath: targetFolderPathComponents)
                         }
                     }
                     .disabled(noteName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -186,6 +194,15 @@ struct VaultBrowserView: View {
         if newValue == .recent {
             folderPathComponents = []
         }
+    }
+
+    private var createNoteFolderPathComponents: [String] {
+        browserMode == .folders ? folderPathComponents : []
+    }
+
+    private var createNoteLocationDescription: String {
+        let pathComponents = createNoteFolderPathComponents
+        return pathComponents.isEmpty ? "Vault Root" : pathComponents.joined(separator: "/")
     }
 
     private func syncSelectedNoteURL(_ newValue: URL?) {

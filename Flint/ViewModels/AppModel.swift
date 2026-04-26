@@ -110,14 +110,17 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func createNote(named name: String) async {
+    func createNote(named name: String, inFolderPath folderPathComponents: [String] = []) async {
         guard let vaultURL = activeVault?.url else { return }
 
         isBusy = true
         defer { isBusy = false }
 
         do {
-            let noteURL = try fileService.createNote(named: name, in: vaultURL)
+            let targetDirectoryURL = folderPathComponents.reduce(vaultURL) { partialURL, component in
+                partialURL.appendingPathComponent(component, isDirectory: true)
+            }
+            let noteURL = try fileService.createNote(named: name, in: targetDirectoryURL)
             try reloadNotes()
 
             if let note = notes.first(where: { $0.url == noteURL }) {

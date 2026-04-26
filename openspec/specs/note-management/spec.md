@@ -42,13 +42,24 @@ The system SHALL select a note automatically when notes exist and no current sel
 
 ### Requirement: Create markdown notes
 
-The system SHALL create new notes as markdown files inside the active vault.
+The system SHALL create new notes as markdown files inside the active vault, using the current folder context when the user is browsing folders.
 
-#### Scenario: Create note without extension
+#### Scenario: Create note in vault root
 
 - GIVEN a vault is active
+- AND the user is not currently drilled into a subfolder
 - WHEN the user creates a note named `Daily Note`
 - THEN Flint creates `Daily Note.md` in the vault root
+- AND the initial file contents are `# Daily Note` followed by a newline
+- AND Flint reloads notes
+- AND Flint opens the created note
+
+#### Scenario: Create note in the current folder
+
+- GIVEN a vault is active
+- AND the user is browsing `Projects/iOS` in the folder-based note browser
+- WHEN the user creates a note named `Daily Note`
+- THEN Flint creates `Projects/iOS/Daily Note.md`
 - AND the initial file contents are `# Daily Note` followed by a newline
 - AND Flint reloads notes
 - AND Flint opens the created note

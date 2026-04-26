@@ -52,6 +52,33 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.selectedNote?.lastModifiedAt, refreshedNote.lastModifiedAt)
     }
 
+    func testCreateNoteUsesCurrentFolderContext() async {
+        let bookmarkStore = BookmarkStoreSpy()
+        let fileService = FileServiceSpy()
+        let createdNoteURL = fileService.createdVaultURL.appendingPathComponent("Projects/iOS/Daily.md")
+        let createdNote = makeNote(
+            title: "Daily",
+            url: createdNoteURL,
+            folderPath: "Projects/iOS",
+            createdAt: .init(timeIntervalSince1970: 100),
+            modifiedAt: .init(timeIntervalSince1970: 100)
+        )
+        fileService.createdNoteURL = createdNoteURL
+        fileService.notesAfterCreate = [createdNote]
+
+        let model = AppModel(bookmarkStore: bookmarkStore, fileService: fileService)
+        await model.openVault(at: fileService.createdVaultURL)
+        await model.createNote(named: "Daily", inFolderPath: ["Projects", "iOS"])
+
+        XCTAssertEqual(fileService.createNoteCalls.count, 1)
+        XCTAssertEqual(fileService.createNoteCalls.first?.0, "Daily")
+        XCTAssertEqual(
+            fileService.createNoteCalls.first?.1,
+            fileService.createdVaultURL.appendingPathComponent("Projects/iOS", isDirectory: true)
+        )
+        XCTAssertEqual(model.selectedNote?.url, createdNoteURL)
+    }
+
     func testMarkdownDocumentRendersRichHTML() {
         let markdown = """
         # Daily
@@ -172,9 +199,12 @@ private final class BookmarkStoreSpy: VaultBookmarkStoring {
 
 private final class FileServiceSpy: VaultFileServing {
     var createdVaultURL = URL(fileURLWithPath: "/tmp/default-vault", isDirectory: true)
+    var createdNoteURL: URL?
     var notesToReturn: [NoteItem] = []
+    var notesAfterCreate: [NoteItem]?
     var notesAfterSave: [NoteItem]?
     var createVaultCalls: [(String, URL)] = []
+    var createNoteCalls: [(String, URL)] = []
     var listMarkdownNotesCalls: [URL] = []
     var savedNotes: [(String, URL)] = []
 
@@ -188,11 +218,15 @@ private final class FileServiceSpy: VaultFileServing {
         if let notesAfterSave, !savedNotes.isEmpty {
             return notesAfterSave
         }
+        if let notesAfterCreate, !createNoteCalls.isEmpty {
+            return notesAfterCreate
+        }
         return notesToReturn
     }
 
-    func createNote(named name: String, in vaultURL: URL) throws -> URL {
-        vaultURL.appendingPathComponent(name)
+    func createNote(named name: String, in directoryURL: URL) throws -> URL {
+        createNoteCalls.append((name, directoryURL))
+        return createdNoteURL ?? directoryURL.appendingPathComponent(name)
     }
 
     func readNote(at url: URL) throws -> String {
