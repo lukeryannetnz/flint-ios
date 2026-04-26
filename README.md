@@ -36,3 +36,21 @@ Future changes can add proposal artifacts under `openspec/changes/` and keep `op
 ## Signing
 
 The repo uses `Configs/Local.xcconfig` for local-only signing overrides. The example file in `Configs/Local.xcconfig.example` shows the expected key. Contributors can create their own local override without committing team-specific settings.
+
+## Testing
+
+Run the required automated suite on a simulator by default:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild \
+  -project Flint.xcodeproj \
+  -scheme Flint \
+  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  -derivedDataPath /tmp/flint-derived-data \
+  test
+```
+
+If that simulator is unavailable on your machine, use another available iOS Simulator destination.
+
+For additional device validation, configure `Configs/Local.xcconfig` locally and run a physical-device test destination with `-allowProvisioningUpdates`.
