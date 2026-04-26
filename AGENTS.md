@@ -17,10 +17,24 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 xcodebuild \
   -project Flint.xcodeproj \
   -scheme Flint \
-  -destination 'id=00008120-0008388A3C61A01E' \
+  -destination 'platform=iOS Simulator,name=iPhone 17' \
   -derivedDataPath /tmp/flint-derived-data \
+  test
+```
+
+Use a currently available iOS Simulator destination if `iPhone 17` is unavailable and still run the full suite.
+
+For optional device validation, contributors may also run:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild \
+  -project Flint.xcodeproj \
+  -scheme Flint \
+  -destination 'id=00008120-0008388A3C61A01E' \
+  -derivedDataPath /tmp/flint-derived-data-device \
   -allowProvisioningUpdates \
   test
 ```
 
-If the connected device destination changes, update the destination id accordingly and still run the full suite.
+Device validation requires local signing configuration and a connected device destination.

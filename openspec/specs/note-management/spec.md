@@ -211,11 +211,12 @@ The system SHALL provide native-feeling controls for common note formatting.
 - AND the updated emphasis is reflected immediately in the writing surface
 - AND newly typed text follows the active bold or italic typing state until the user changes it
 
-#### Scenario: Autosave status remains passive
+#### Scenario: Autosave feedback stays out of the writing surface
 
 - GIVEN the note has unsaved changes
-- WHEN Flint shows autosave status in the note surface
-- THEN Flint presents passive autosave feedback without a manual save button in that status chrome
+- WHEN the user is actively writing
+- THEN Flint continues autosaving in the background
+- AND Flint does not display a persistent autosave status overlay in the note surface
 
 #### Scenario: Production prototype hides debugging instrumentation
 
@@ -317,20 +318,13 @@ The system SHALL continue storing notes as markdown files while keeping that rep
 - THEN Flint reformats each targeted paragraph in sequence using the current document state
 - AND Flint does not misalign or corrupt adjacent paragraphs because of stale source indices
 
-### Requirement: Save status in the editor
+### Requirement: Autosave remains non-disruptive while editing
 
-The system SHALL communicate whether the current note still has pending edits.
+The system SHALL autosave note edits without displaying a persistent save-status overlay while the user is typing.
 
 #### Scenario: Unsaved edits are pending
 
 - GIVEN the current note has unsaved changes
 - WHEN the editor is shown
-- THEN the status area displays `Autosaving…`
-- AND Flint does not show a manual save button in that status area
-
-#### Scenario: Note is fully saved
-
-- GIVEN the current note has no unsaved changes
-- WHEN the editor is shown
-- THEN the status area displays `Saved`
-- AND Flint does not show a manual save button in that status area
+- THEN Flint continues autosaving in the background
+- AND the editor does not display a persistent autosave or saved-status overlay

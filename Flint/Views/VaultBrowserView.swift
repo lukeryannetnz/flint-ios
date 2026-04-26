@@ -125,7 +125,6 @@ struct VaultBrowserView: View {
                     get: { model.noteText },
                     set: { model.updateNoteText($0) }
                 ),
-                hasUnsavedChanges: model.hasUnsavedChanges,
                 onSave: {
                     Task {
                         await model.saveCurrentNoteIfNeeded()
@@ -305,7 +304,6 @@ struct VaultBrowserView: View {
 private struct NoteDocumentView: View {
     let note: NoteItem
     @Binding var text: String
-    let hasUnsavedChanges: Bool
     let onSave: () -> Void
     @State private var isEditing = false
     @State private var formattingState = FlintFormattingState()
@@ -325,7 +323,6 @@ private struct NoteDocumentView: View {
                         Text(note.relativePath)
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
-
                         Spacer()
 
                         Text(note.lastEditedDisplayText)
@@ -373,19 +370,6 @@ private struct NoteDocumentView: View {
                 .id(note.url.path)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .background(documentSurface, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-                .overlay(alignment: .bottomTrailing) {
-                    if hasUnsavedChanges {
-                        HStack(spacing: 10) {
-                            Text("Autosaving…")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .padding(18)
-                    }
-                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(.horizontal, 22)

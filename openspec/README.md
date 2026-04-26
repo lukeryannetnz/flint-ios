@@ -12,6 +12,7 @@ This repository uses OpenSpec as a lightweight, checked-in source of truth for F
 - `app-bootstrap`: launch and vault restoration behavior
 - `vault-management`: creating and opening vault folders
 - `note-management`: listing, creating, reading, editing, and autosaving markdown notes
+- `testing-workflow`: default simulator testing and optional device validation
 
 ## Usage
 
