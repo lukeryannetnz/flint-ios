@@ -32,7 +32,7 @@ final class VaultFileServiceTests: XCTestCase {
         let noteURL = try service.createNote(named: "Daily Note", in: vaultURL)
 
         XCTAssertEqual(noteURL.lastPathComponent, "Daily Note.md")
-        XCTAssertEqual(try service.readNote(at: noteURL), "# Daily Note\n")
+        XCTAssertEqual(try service.readNote(at: noteURL), "")
 
         try service.saveNote("# Daily Note\nUpdated body", at: noteURL)
 
@@ -55,7 +55,7 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertEqual(noteURL.lastPathComponent, "Roadmap.md")
         XCTAssertEqual(notes.map(\.relativePath), ["Projects/Roadmap.md"])
         XCTAssertEqual(notes.first?.folderPath, "Projects")
-        XCTAssertEqual(try service.readNote(at: noteURL), "# Roadmap\n")
+        XCTAssertEqual(try service.readNote(at: noteURL), "")
     }
 
     func testCreateNoteRejectsDuplicateNameInSubfolder() throws {

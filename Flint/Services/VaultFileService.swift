@@ -118,8 +118,7 @@ final class VaultFileService: VaultFileServing {
                 throw VaultError.itemAlreadyExists(fileName)
             }
 
-            let initialContents = "# \(noteURL.deletingPathExtension().lastPathComponent)\n"
-            try initialContents.write(to: noteURL, atomically: true, encoding: .utf8)
+            try "".write(to: noteURL, atomically: true, encoding: .utf8)
             return noteURL
         }
     }
