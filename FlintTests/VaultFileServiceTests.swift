@@ -44,6 +44,32 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertEqual(try service.readNote(at: noteURL), "# Daily Note\nUpdated body")
     }
 
+    func testCreateNoteInSubfolder() throws {
+        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+        let projectsURL = vaultURL.appendingPathComponent("Projects", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectsURL, withIntermediateDirectories: false)
+
+        let noteURL = try service.createNote(named: "Roadmap", in: projectsURL)
+        let notes = try service.listMarkdownNotes(in: vaultURL)
+
+        XCTAssertEqual(noteURL.lastPathComponent, "Roadmap.md")
+        XCTAssertEqual(notes.map(\.relativePath), ["Projects/Roadmap.md"])
+        XCTAssertEqual(notes.first?.folderPath, "Projects")
+        XCTAssertEqual(try service.readNote(at: noteURL), "")
+    }
+
+    func testCreateNoteRejectsDuplicateNameInSubfolder() throws {
+        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+        let projectsURL = vaultURL.appendingPathComponent("Projects", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectsURL, withIntermediateDirectories: false)
+
+        _ = try service.createNote(named: "Roadmap", in: projectsURL)
+
+        XCTAssertThrowsError(try service.createNote(named: "Roadmap", in: projectsURL)) { error in
+            XCTAssertEqual(error as? VaultError, .itemAlreadyExists("Roadmap.md"))
+        }
+    }
+
     func testListMarkdownNotesCapturesFolderPreviewAndDates() throws {
         let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
         let projectFolderURL = vaultURL.appendingPathComponent("Projects", isDirectory: true)

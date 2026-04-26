@@ -52,6 +52,87 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.selectedNote?.lastModifiedAt, refreshedNote.lastModifiedAt)
     }
 
+    func testCreateNoteUsesCurrentFolderContext() async {
+        let bookmarkStore = BookmarkStoreSpy()
+        let fileService = FileServiceSpy()
+        let createdNoteURL = fileService.createdVaultURL.appendingPathComponent("Projects/iOS/Daily.md")
+        let createdNote = makeNote(
+            title: "Daily",
+            url: createdNoteURL,
+            folderPath: "Projects/iOS",
+            createdAt: .init(timeIntervalSince1970: 100),
+            modifiedAt: .init(timeIntervalSince1970: 100)
+        )
+        fileService.createdNoteURL = createdNoteURL
+        fileService.notesAfterCreate = [createdNote]
+
+        let model = AppModel(bookmarkStore: bookmarkStore, fileService: fileService)
+        await model.openVault(at: fileService.createdVaultURL)
+        await model.createNote(named: "Daily", inFolderPath: ["Projects", "iOS"])
+
+        XCTAssertEqual(fileService.createNoteCalls.count, 1)
+        XCTAssertEqual(fileService.createNoteCalls.first?.0, "Daily")
+        XCTAssertEqual(
+            fileService.createNoteCalls.first?.1,
+            fileService.createdVaultURL.appendingPathComponent("Projects/iOS", isDirectory: true)
+        )
+        XCTAssertEqual(model.selectedNote?.url, createdNoteURL)
+    }
+
+    func testMarkdownDocumentRendersRichHTML() {
+        let markdown = """
+        # Daily
+
+        Intro paragraph with a [link](https://example.com).
+
+        - one
+        - two
+
+        1. first
+        2. second
+
+        - [x] done
+        - [ ] next
+
+        > quoted line
+
+        | Name | Value |
+        | --- | --- |
+        | Flint | Spark |
+
+        ```swift
+        print("hi")
+        ```
+
+        ![Sketch](diagram.png)
+        """
+
+        let document = MarkdownDocument(noteTitle: "Daily", markdown: markdown)
+
+        XCTAssertFalse(document.markdown.hasPrefix("# Daily"))
+        XCTAssertTrue(document.html.contains("<a href=\"https://example.com\">link</a>"))
+        XCTAssertTrue(document.html.contains("<ul><li>one</li><li>two</li></ul>"))
+        XCTAssertTrue(document.html.contains("<ol><li>first</li><li>second</li></ol>"))
+        XCTAssertTrue(document.html.contains("<ul class=\"task-list\">"))
+        XCTAssertTrue(document.html.contains("<blockquote><p>quoted line</p></blockquote>"))
+        XCTAssertTrue(document.html.contains("<table>"))
+        XCTAssertTrue(document.html.contains("<pre><code class=\"language-swift\">"))
+        XCTAssertTrue(document.html.contains("<figure class=\"md-image\"><img src=\"diagram.png\" alt=\"Sketch\" loading=\"lazy\"><figcaption>Sketch</figcaption></figure>"))
+    }
+
+    func testMarkdownDocumentRendersYouTubeEmbedAsThumbnail() {
+        let markdown = """
+        ![Embedded YouTube video](https://www.youtube.com/embed/k51Q4ibkhDk?feature=oembed&autoplay=true)
+        """
+
+        let document = MarkdownDocument(noteTitle: "Video", markdown: markdown)
+
+        XCTAssertTrue(document.html.contains("class=\"md-video-thumb\""))
+        XCTAssertTrue(document.html.contains("https://www.youtube.com/watch?v=k51Q4ibkhDk"))
+        XCTAssertTrue(document.html.contains("https://i.ytimg.com/vi/k51Q4ibkhDk/hqdefault.jpg"))
+        XCTAssertTrue(document.html.contains("<figcaption>Embedded YouTube video</figcaption>"))
+    }
+
     func testRichTextCodecMapsMarkdownIntoFormattingModel() {
         let markdown = """
         # Daily
@@ -261,6 +342,22 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(root.childFolders.first?.childFolders.first?.name, "iOS")
         XCTAssertEqual(root.childFolders.first?.childFolders.first?.notes.map(\.title), ["Runbook", "API"])
     }
+
+    func testVaultFolderResolvedPathComponentsFallsBackToRootForMissingFolder() {
+        let notes = [
+            makeNote(
+                title: "Runbook",
+                url: URL(fileURLWithPath: "/tmp/vault/Projects/iOS/runbook.md"),
+                folderPath: "Projects/iOS",
+                createdAt: .init(timeIntervalSince1970: 300)
+            )
+        ]
+
+        let root = VaultFolder.root(vaultName: "Flint Vault", notes: notes)
+
+        XCTAssertEqual(root.resolvedPathComponents(for: ["Projects", "iOS"]), ["Projects", "iOS"])
+        XCTAssertEqual(root.resolvedPathComponents(for: ["Projects", "Missing"]), [])
+    }
 }
 
 private final class BookmarkStoreSpy: VaultBookmarkStoring {
@@ -291,9 +388,12 @@ private final class BookmarkStoreSpy: VaultBookmarkStoring {
 
 private final class FileServiceSpy: VaultFileServing {
     var createdVaultURL = URL(fileURLWithPath: "/tmp/default-vault", isDirectory: true)
+    var createdNoteURL: URL?
     var notesToReturn: [NoteItem] = []
+    var notesAfterCreate: [NoteItem]?
     var notesAfterSave: [NoteItem]?
     var createVaultCalls: [(String, URL)] = []
+    var createNoteCalls: [(String, URL)] = []
     var listMarkdownNotesCalls: [URL] = []
     var savedNotes: [(String, URL)] = []
 
@@ -307,11 +407,15 @@ private final class FileServiceSpy: VaultFileServing {
         if let notesAfterSave, !savedNotes.isEmpty {
             return notesAfterSave
         }
+        if let notesAfterCreate, !createNoteCalls.isEmpty {
+            return notesAfterCreate
+        }
         return notesToReturn
     }
 
-    func createNote(named name: String, in vaultURL: URL) throws -> URL {
-        vaultURL.appendingPathComponent(name)
+    func createNote(named name: String, in directoryURL: URL) throws -> URL {
+        createNoteCalls.append((name, directoryURL))
+        return createdNoteURL ?? directoryURL.appendingPathComponent(name)
     }
 
     func readNote(at url: URL) throws -> String {

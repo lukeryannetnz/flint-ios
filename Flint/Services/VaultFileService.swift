@@ -26,7 +26,7 @@ enum VaultError: LocalizedError, Equatable {
 protocol VaultFileServing {
     func createVault(named name: String, in parentURL: URL) throws -> URL
     func listMarkdownNotes(in vaultURL: URL) throws -> [NoteItem]
-    func createNote(named name: String, in vaultURL: URL) throws -> URL
+    func createNote(named name: String, in directoryURL: URL) throws -> URL
     func readNote(at url: URL) throws -> String
     func saveNote(_ text: String, at url: URL) throws
 }
@@ -108,11 +108,11 @@ final class VaultFileService: VaultFileServing {
         }
     }
 
-    func createNote(named name: String, in vaultURL: URL) throws -> URL {
+    func createNote(named name: String, in directoryURL: URL) throws -> URL {
         let fileName = try validatedMarkdownFilename(name)
 
-        return try coordinatedWrite(at: vaultURL) { coordinatedVaultURL in
-            let noteURL = coordinatedVaultURL.appendingPathComponent(fileName, isDirectory: false)
+        return try coordinatedWrite(at: directoryURL) { coordinatedDirectoryURL in
+            let noteURL = coordinatedDirectoryURL.appendingPathComponent(fileName, isDirectory: false)
 
             guard !fileManager.fileExists(atPath: noteURL.path) else {
                 throw VaultError.itemAlreadyExists(fileName)
