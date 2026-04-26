@@ -437,13 +437,20 @@ final class VaultFileService: VaultFileServing {
         }
 
         let standardizedCandidate = candidateURL.standardizedFileURL
-        let vaultPath = standardizedVaultURL.path
-        let candidatePath = standardizedCandidate.path
+        let resolvedCandidateParent = standardizedCandidate
+            .deletingLastPathComponent()
+            .resolvingSymlinksInPath()
+        let resolvedVaultURL = standardizedVaultURL.resolvingSymlinksInPath()
+        let resolvedCandidate = resolvedCandidateParent
+            .appendingPathComponent(standardizedCandidate.lastPathComponent, isDirectory: false)
+            .resolvingSymlinksInPath()
+        let vaultPath = resolvedVaultURL.path
+        let candidatePath = resolvedCandidate.path
         guard candidatePath == vaultPath || candidatePath.hasPrefix(vaultPath + "/") else {
             return nil
         }
 
-        return standardizedCandidate
+        return resolvedCandidate
     }
 
     private static func cleanedMarkdownPath(_ path: String) -> String {

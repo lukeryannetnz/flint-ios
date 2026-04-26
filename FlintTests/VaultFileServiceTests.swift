@@ -134,6 +134,28 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertNil(relativeResolved)
     }
 
+    func testResolveImageURLRejectsSymlinkEscapingVault() throws {
+        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+        let noteFolderURL = vaultURL.appendingPathComponent("Notes", isDirectory: true)
+        try FileManager.default.createDirectory(at: noteFolderURL, withIntermediateDirectories: true)
+        let noteURL = noteFolderURL.appendingPathComponent("Daily.md")
+        try "".write(to: noteURL, atomically: true, encoding: .utf8)
+
+        let outsideDirectoryURL = temporaryDirectoryURL.appendingPathComponent("Outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: outsideDirectoryURL, withIntermediateDirectories: true)
+
+        let symlinkURL = vaultURL.appendingPathComponent("Attachments", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: symlinkURL, withDestinationURL: outsideDirectoryURL)
+
+        let resolved = VaultFileService.resolveImageURL(
+            markdownPath: "/Attachments/diagram.heic",
+            noteURL: noteURL,
+            vaultURL: vaultURL
+        )
+
+        XCTAssertNil(resolved)
+    }
+
     func testImportCameraImageCreatesManagedJPEGReference() throws {
         let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
         let noteURL = try service.createNote(named: "Daily", in: vaultURL)

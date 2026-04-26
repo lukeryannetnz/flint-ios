@@ -453,8 +453,9 @@ private struct NoteDocumentView: View {
         ) { result in
             isShowingFileImporter = false
             guard case .success(let urls) = result, let url = urls.first else { return }
+            guard let importedFile = copyImportedFileToTemporaryLocation(url) else { return }
             Task {
-                if let inserted = await onImportImageFile(url, url.deletingPathExtension().lastPathComponent) {
+                if let inserted = await onImportImageFile(importedFile.url, importedFile.preferredFilename) {
                     pendingCommand = makeCommand(.insertImage(inserted))
                 }
             }
@@ -485,6 +486,39 @@ private struct NoteDocumentView: View {
     private func makeCommand(_ action: RichTextEditorCommand.Action) -> RichTextEditorCommand {
         nextCommandID += 1
         return RichTextEditorCommand(id: nextCommandID, action: action)
+    }
+
+    private func copyImportedFileToTemporaryLocation(_ url: URL) -> ImportedImageSelection? {
+        let didStartAccessing = url.startAccessingSecurityScopedResource()
+        defer {
+            if didStartAccessing {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let destinationURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(url.pathExtension)
+
+        do {
+            if FileManager.default.fileExists(atPath: destinationURL.path) {
+                try FileManager.default.removeItem(at: destinationURL)
+            }
+            try FileManager.default.copyItem(at: url, to: destinationURL)
+            return ImportedImageSelection(
+                url: destinationURL,
+                preferredFilename: url.deletingPathExtension().lastPathComponent
+            )
+        } catch {
+            guard !didStartAccessing else {
+                return nil
+            }
+
+            return ImportedImageSelection(
+                url: url,
+                preferredFilename: url.deletingPathExtension().lastPathComponent
+            )
+        }
     }
 }
 
