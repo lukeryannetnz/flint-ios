@@ -282,6 +282,7 @@ The system SHALL continue storing notes as markdown files while keeping that rep
 - WHEN Flint loads and later saves that note through the rich text editor
 - THEN text inside the fenced code block remains literal code content
 - AND Flint does not reinterpret inline markdown markers inside that code block as emphasis or links
+- AND Flint does not introduce a phantom blank code line before the closing fence during round-trip serialization
 
 #### Scenario: Preserve escaped markdown punctuation
 

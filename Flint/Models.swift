@@ -158,11 +158,10 @@ enum FlintRichTextCodec {
     static func attributedString(from markdown: String) -> NSMutableAttributedString {
         let normalized = markdown.replacingOccurrences(of: "\r\n", with: "\n")
         let lines = normalized.components(separatedBy: "\n")
-        let result = NSMutableAttributedString()
+        var paragraphs: [(text: String, style: FlintBlockStyle)] = []
         var isInsideCodeFence = false
 
-        for (index, line) in lines.enumerated() {
-            let isLast = index == lines.count - 1
+        for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             if trimmed.hasPrefix("```") {
@@ -193,11 +192,16 @@ enum FlintRichTextCodec {
                 content = line
             }
 
-            let paragraph = attributedParagraph(for: content, style: style)
+            paragraphs.append((text: content, style: style))
+        }
+
+        let result = NSMutableAttributedString()
+        for (index, paragraphData) in paragraphs.enumerated() {
+            let paragraph = attributedParagraph(for: paragraphData.text, style: paragraphData.style)
             result.append(paragraph)
 
-            if !isLast {
-                result.append(NSAttributedString(string: "\n", attributes: paragraphAttributes(for: style)))
+            if index < paragraphs.count - 1 {
+                result.append(NSAttributedString(string: "\n", attributes: paragraphAttributes(for: paragraphData.style)))
             }
         }
 

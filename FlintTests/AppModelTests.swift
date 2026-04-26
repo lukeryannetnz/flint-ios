@@ -201,10 +201,13 @@ final class AppModelTests: XCTestCase {
         """
 
         let attributed = FlintRichTextCodec.attributedString(from: markdown)
+        XCTAssertEqual(attributed.string, "*ptr* [x](y)")
+        XCTAssertEqual(FlintRichTextCodec.blockStyle(at: 0, in: attributed), .codeBlock)
+
         let string = attributed.string as NSString
         let codeRange = string.range(of: "*ptr* [x](y)")
-
         XCTAssertNotEqual(codeRange.location, NSNotFound)
+        guard codeRange.location != NSNotFound else { return }
         XCTAssertNil(attributed.attribute(.link, at: codeRange.location, effectiveRange: nil))
         XCTAssertNil(attributed.attribute(.flintBold, at: codeRange.location, effectiveRange: nil))
         XCTAssertNil(attributed.attribute(.flintItalic, at: codeRange.location, effectiveRange: nil))
