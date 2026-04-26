@@ -167,20 +167,13 @@ The system SHALL continue to expose raw markdown editing when the user explicitl
 - THEN Flint shows the raw markdown source text
 - AND Flint does not replace that editor with the rendered rich text editor
 
-### Requirement: Save status in the editor
+### Requirement: Autosave remains non-disruptive while editing
 
-The system SHALL communicate whether the current note still has pending edits.
+The system SHALL autosave note edits without displaying a persistent save-status overlay while the user is typing.
 
 #### Scenario: Unsaved edits are pending
 
 - GIVEN the current note has unsaved changes
 - WHEN the editor is shown
-- THEN the status area displays `Autosaving…`
-- AND the Save button is enabled
-
-#### Scenario: Note is fully saved
-
-- GIVEN the current note has no unsaved changes
-- WHEN the editor is shown
-- THEN the status area displays `Saved`
-- AND the Save button is disabled
+- THEN Flint continues autosaving in the background
+- AND the editor does not display a persistent autosave or saved-status overlay

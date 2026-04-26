@@ -134,7 +134,6 @@ struct VaultBrowserView: View {
                 ),
                 presentationMode: $presentationMode,
                 isInlineEditing: $isInlineEditing,
-                hasUnsavedChanges: model.hasUnsavedChanges,
                 onSave: {
                     Task {
                         await model.saveCurrentNoteIfNeeded()
@@ -331,7 +330,6 @@ private struct NoteDocumentView: View {
     @Binding var text: String
     @Binding var presentationMode: DocumentPresentationMode
     @Binding var isInlineEditing: Bool
-    let hasUnsavedChanges: Bool
     let onSave: () -> Void
     @State private var didAppearForCurrentNote = false
     @State private var inlineEditorHeight: CGFloat = 420
@@ -436,25 +434,6 @@ private struct NoteDocumentView: View {
                 }
             }
 
-            VStack {
-                Spacer()
-
-                if hasUnsavedChanges {
-                    HStack {
-                        Text("Autosaving…")
-                            .font(.footnote.weight(.medium))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Save", action: onSave)
-                            .buttonStyle(.borderedProminent)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 14)
-                    .background(.thinMaterial, in: Capsule())
-                    .padding(.bottom, 18)
-                    .padding(.horizontal, 22)
-                }
-            }
         }
         .animation(.easeInOut(duration: 0.2), value: isInlineEditing)
     }
