@@ -6,6 +6,19 @@ struct Vault: Equatable {
     let url: URL
 }
 
+struct InsertedNoteImage: Equatable {
+    let markdownSource: String
+    let assetURL: URL
+    let altText: String
+}
+
+struct NoteImageViewerItem: Identifiable, Equatable {
+    let assetURL: URL
+    let altText: String
+
+    var id: String { assetURL.path + "::" + altText }
+}
+
 struct NoteItem: Identifiable, Hashable {
     let url: URL
     let title: String
@@ -167,17 +180,22 @@ extension NSAttributedString.Key {
     static let flintInlineCode = NSAttributedString.Key("FlintInlineCode")
     static let flintBold = NSAttributedString.Key("FlintBold")
     static let flintItalic = NSAttributedString.Key("FlintItalic")
+    static let flintImageMarkdownSource = NSAttributedString.Key("FlintImageMarkdownSource")
+    static let flintImageAssetURL = NSAttributedString.Key("FlintImageAssetURL")
+    static let flintImageAltText = NSAttributedString.Key("FlintImageAltText")
+    static let flintSyntheticImageCaption = NSAttributedString.Key("FlintSyntheticImageCaption")
 }
 
 enum FlintRichTextCodec {
     private static let bulletPrefix = "\u{2022}\t"
     private static let escapableMarkdownCharacters: Set<Character> = ["\\", "*", "_", "[", "]", "`"]
 
-    static func attributedString(from markdown: String) -> NSMutableAttributedString {
+    static func attributedString(from markdown: String, noteURL: URL? = nil, vaultURL: URL? = nil) -> NSMutableAttributedString {
         let normalized = markdown.replacingOccurrences(of: "\r\n", with: "\n")
         let lines = normalized.components(separatedBy: "\n")
-        var paragraphs: [(text: String, style: FlintBlockStyle)] = []
         var isInsideCodeFence = false
+        let result = NSMutableAttributedString()
+        var hasVisibleLine = false
 
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -187,40 +205,47 @@ enum FlintRichTextCodec {
                 continue
             }
 
-            let style: FlintBlockStyle
-            let content: String
+            if hasVisibleLine {
+                let newlineAttributes = result.length > 0
+                    ? result.attributes(at: max(result.length - 1, 0), effectiveRange: nil)
+                    : paragraphAttributes(for: .body)
+                result.append(NSAttributedString(string: "\n", attributes: newlineAttributes))
+            }
 
-            if isInsideCodeFence {
-                style = .codeBlock
-                content = line
-            } else if let headingLevel = headingLevel(for: line) {
-                style = headingStyle(for: headingLevel)
-                content = String(line.drop { $0 == "#" || $0 == " " })
-            } else if let bulletContent = bulletContent(for: line) {
-                style = .bulletList
-                content = bulletPrefix + bulletContent
-            } else if let numbered = numberedListContent(for: line) {
-                style = .numberedList
-                content = "\(numbered.number).\t" + numbered.content
-            } else if trimmed.hasPrefix(">") {
-                style = .quote
-                content = String(trimmed.dropFirst().drop(while: { $0 == " " }))
+            if !isInsideCodeFence,
+               let imageReference = markdownImageReference(for: trimmed) {
+                result.append(attributedImageBlock(
+                    markdownSource: imageReference.markdownSource,
+                    altText: imageReference.altText,
+                    assetURL: resolvedImageURL(for: imageReference.sourcePath, noteURL: noteURL, vaultURL: vaultURL)
+                ))
             } else {
-                style = .body
-                content = line
+                let style: FlintBlockStyle
+                let content: String
+
+                if isInsideCodeFence {
+                    style = .codeBlock
+                    content = line
+                } else if let headingLevel = headingLevel(for: line) {
+                    style = headingStyle(for: headingLevel)
+                    content = String(line.drop { $0 == "#" || $0 == " " })
+                } else if let bulletContent = bulletContent(for: line) {
+                    style = .bulletList
+                    content = bulletPrefix + bulletContent
+                } else if let numbered = numberedListContent(for: line) {
+                    style = .numberedList
+                    content = "\(numbered.number).\t" + numbered.content
+                } else if trimmed.hasPrefix(">") {
+                    style = .quote
+                    content = String(trimmed.dropFirst().drop(while: { $0 == " " }))
+                } else {
+                    style = .body
+                    content = line
+                }
+
+                result.append(attributedParagraph(for: content, style: style))
             }
-
-            paragraphs.append((text: content, style: style))
-        }
-
-        let result = NSMutableAttributedString()
-        for (index, paragraphData) in paragraphs.enumerated() {
-            let paragraph = attributedParagraph(for: paragraphData.text, style: paragraphData.style)
-            result.append(paragraph)
-
-            if index < paragraphs.count - 1 {
-                result.append(NSAttributedString(string: "\n", attributes: paragraphAttributes(for: paragraphData.style)))
-            }
+            hasVisibleLine = true
         }
 
         if result.length == 0 {
@@ -245,6 +270,20 @@ enum FlintRichTextCodec {
             let style = blockStyle(from: attributes)
             let rawParagraph = paragraphs[paragraphIndex]
 
+            if (attributes[.flintSyntheticImageCaption] as? Bool) == true {
+                continue
+            }
+
+            if let imageMarkdown = attributes[.flintImageMarkdownSource] as? String {
+                if style == .codeBlock, isInsideCodeBlock {
+                    markdownLines.append("```")
+                    isInsideCodeBlock = false
+                }
+                markdownLines.append(imageMarkdown)
+                numberedIndex = 0
+                continue
+            }
+
             if style != .codeBlock, isInsideCodeBlock {
                 markdownLines.append("```")
                 isInsideCodeBlock = false
@@ -261,11 +300,13 @@ enum FlintRichTextCodec {
                 markdownLines.append("### " + markdownInline(from: rawParagraph, globalLocation: location, in: attributedString))
                 numberedIndex = 0
             case .bulletList:
-                markdownLines.append("- " + markdownInline(from: visibleContent(for: rawParagraph, style: style), globalLocation: location, in: attributedString, visiblePrefixLength: visiblePrefix(for: style, paragraphText: rawParagraph).utf16.count))
+                let serialized = markdownInline(from: visibleContent(for: rawParagraph, style: style), globalLocation: location, in: attributedString, visiblePrefixLength: visiblePrefix(for: style, paragraphText: rawParagraph).utf16.count)
+                markdownLines.append(serialized.isEmpty ? "" : "- " + serialized)
                 numberedIndex = 0
             case .numberedList:
                 numberedIndex += 1
-                markdownLines.append("\(numberedIndex). " + markdownInline(from: visibleContent(for: rawParagraph, style: style), globalLocation: location, in: attributedString, visiblePrefixLength: visiblePrefix(for: style, paragraphText: rawParagraph).utf16.count))
+                let serialized = markdownInline(from: visibleContent(for: rawParagraph, style: style), globalLocation: location, in: attributedString, visiblePrefixLength: visiblePrefix(for: style, paragraphText: rawParagraph).utf16.count)
+                markdownLines.append(serialized.isEmpty ? "" : "\(numberedIndex). " + serialized)
             case .quote:
                 markdownLines.append("> " + markdownInline(from: rawParagraph, globalLocation: location, in: attributedString))
                 numberedIndex = 0
@@ -408,6 +449,20 @@ enum FlintRichTextCodec {
 
     static func defaultTypingAttributes(for style: FlintBlockStyle) -> [NSAttributedString.Key: Any] {
         paragraphAttributes(for: style)
+    }
+
+    static func updateImageAttachments(in attributedString: NSMutableAttributedString, availableTextWidth: CGFloat) {
+        guard attributedString.length > 0 else { return }
+
+        attributedString.enumerateAttribute(.attachment, in: NSRange(location: 0, length: attributedString.length), options: []) { value, range, _ in
+            guard let attachment = value as? FlintMarkdownImageAttachment else { return }
+            attachment.applyLayout(for: availableTextWidth)
+            attributedString.addAttributes([
+                .flintImageMarkdownSource: attachment.markdownSource,
+                .flintImageAltText: attachment.altText,
+                .flintImageAssetURL: attachment.assetURL as Any
+            ], range: range)
+        }
     }
 
     private static func markdownInline(
@@ -870,6 +925,198 @@ enum FlintRichTextCodec {
         default:
             return UIColor.label
         }
+    }
+
+    private static func markdownImageReference(for line: String) -> (markdownSource: String, altText: String, sourcePath: String)? {
+        guard let match = line.wholeMatch(of: /^\!\[(.*)\]\((.+)\)$/) else {
+            return nil
+        }
+
+        let altText = String(match.output.1)
+        let sourcePath = String(match.output.2).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sourcePath.isEmpty else { return nil }
+        return (markdownSource: line, altText: altText, sourcePath: sourcePath)
+    }
+
+    private static func resolvedImageURL(for sourcePath: String, noteURL: URL?, vaultURL: URL?) -> URL? {
+        guard let noteURL, let vaultURL else { return nil }
+        return VaultFileService.resolveImageURL(markdownPath: sourcePath, noteURL: noteURL, vaultURL: vaultURL)
+    }
+
+    private static func attributedImageBlock(markdownSource: String, altText: String, assetURL: URL?) -> NSAttributedString {
+        let attachment = FlintMarkdownImageAttachment(markdownSource: markdownSource, assetURL: assetURL, altText: altText)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.paragraphSpacing = altText.isEmpty ? 18 : 8
+        paragraph.paragraphSpacingBefore = 6
+        paragraph.lineSpacing = 4
+
+        let imageAttributes: [NSAttributedString.Key: Any] = [
+            .attachment: attachment,
+            .paragraphStyle: paragraph,
+            .flintBlockStyle: FlintBlockStyle.body.rawValue,
+            .flintImageMarkdownSource: markdownSource,
+            .flintImageAltText: altText
+        ]
+
+        let result = NSMutableAttributedString(
+            string: String(Character(UnicodeScalar(NSTextAttachment.character)!)),
+            attributes: imageAttributes
+        )
+        if let assetURL {
+            result.addAttribute(NSAttributedString.Key.flintImageAssetURL, value: assetURL, range: NSRange(location: 0, length: result.length))
+        }
+
+        if !altText.isEmpty {
+            let captionParagraph = NSMutableParagraphStyle()
+            captionParagraph.alignment = .center
+            captionParagraph.paragraphSpacing = 18
+            captionParagraph.lineSpacing = 3
+
+            let captionAttributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 14, weight: .medium),
+                .foregroundColor: UIColor.secondaryLabel,
+                .paragraphStyle: captionParagraph,
+                .flintBlockStyle: FlintBlockStyle.body.rawValue,
+                .flintSyntheticImageCaption: true
+            ]
+            result.append(NSAttributedString(string: "\n" + altText, attributes: captionAttributes))
+        }
+
+        return result
+    }
+}
+
+final class FlintMarkdownImageAttachment: NSTextAttachment {
+    let markdownSource: String
+    let assetURL: URL?
+    let altText: String
+
+    private var lastAppliedWidth: CGFloat = -1
+
+    init(markdownSource: String, assetURL: URL?, altText: String) {
+        self.markdownSource = markdownSource
+        self.assetURL = assetURL
+        self.altText = altText
+        super.init(data: nil, ofType: nil)
+        image = FlintImageAttachmentRenderer.renderThumbnail(assetURL: assetURL, altText: altText, availableWidth: 320)
+        bounds = CGRect(x: 0, y: 6, width: image?.size.width ?? 220, height: image?.size.height ?? 160)
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    func applyLayout(for availableWidth: CGFloat) {
+        guard availableWidth > 1, abs(lastAppliedWidth - availableWidth) > 0.5 else { return }
+        let rendered = FlintImageAttachmentRenderer.renderThumbnail(
+            assetURL: assetURL,
+            altText: altText,
+            availableWidth: availableWidth
+        )
+        image = rendered
+        bounds = CGRect(origin: CGPoint(x: 0, y: 6), size: rendered.size)
+        lastAppliedWidth = availableWidth
+    }
+
+    var viewerItem: NoteImageViewerItem? {
+        guard let assetURL else { return nil }
+        return NoteImageViewerItem(assetURL: assetURL, altText: altText)
+    }
+}
+
+private enum FlintImageAttachmentRenderer {
+    static func renderThumbnail(assetURL: URL?, altText: String, availableWidth: CGFloat) -> UIImage {
+        if let assetURL,
+           let sourceImage = UIImage(contentsOfFile: assetURL.path) {
+            return renderImageCard(image: sourceImage, altText: altText, availableWidth: availableWidth)
+        }
+
+        return renderPlaceholderCard(title: altText.isEmpty ? "Image unavailable" : altText, availableWidth: availableWidth)
+    }
+
+    private static func renderImageCard(image: UIImage, altText: String, availableWidth: CGFloat) -> UIImage {
+        let imageSize = image.size == .zero ? CGSize(width: 1200, height: 900) : image.size
+        let targetWidth = targetWidth(for: imageSize, availableWidth: availableWidth)
+        let targetHeight = max(120, min(targetWidth * imageSize.height / max(imageSize.width, 1), targetWidth * 1.35))
+        let canvasSize = CGSize(width: targetWidth, height: targetHeight)
+
+        let renderer = UIGraphicsImageRenderer(size: canvasSize)
+        return renderer.image { context in
+            let rect = CGRect(origin: .zero, size: canvasSize)
+            let path = UIBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), cornerRadius: 24)
+
+            context.cgContext.saveGState()
+            context.cgContext.setShadow(offset: CGSize(width: 0, height: 10), blur: 24, color: UIColor.black.withAlphaComponent(0.16).cgColor)
+            UIColor.systemBackground.setFill()
+            path.fill()
+            context.cgContext.restoreGState()
+
+            UIColor.separator.withAlphaComponent(0.18).setStroke()
+            path.lineWidth = 1
+            path.stroke()
+
+            context.cgContext.saveGState()
+            path.addClip()
+            image.draw(in: rect, blendMode: .normal, alpha: 1)
+
+            let overlay = CAGradientLayer()
+            overlay.frame = rect
+            overlay.colors = [
+                UIColor.clear.cgColor,
+                UIColor.black.withAlphaComponent(0.08).cgColor
+            ]
+            overlay.startPoint = CGPoint(x: 0.5, y: 0)
+            overlay.endPoint = CGPoint(x: 0.5, y: 1)
+            overlay.render(in: context.cgContext)
+            context.cgContext.restoreGState()
+        }
+    }
+
+    private static func renderPlaceholderCard(title: String, availableWidth: CGFloat) -> UIImage {
+        let size = CGSize(width: max(180, min(availableWidth * 0.72, 320)), height: 168)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { context in
+            let rect = CGRect(origin: .zero, size: size)
+            let path = UIBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), cornerRadius: 24)
+            UIColor.secondarySystemBackground.setFill()
+            path.fill()
+            UIColor.separator.withAlphaComponent(0.18).setStroke()
+            path.lineWidth = 1
+            path.stroke()
+
+            let iconConfig = UIImage.SymbolConfiguration(pointSize: 30, weight: .semibold)
+            let icon = UIImage(systemName: "photo.slash", withConfiguration: iconConfig)
+            let iconRect = CGRect(x: (size.width - 30) / 2, y: 42, width: 30, height: 28)
+            icon?.withTintColor(.secondaryLabel, renderingMode: .alwaysOriginal).draw(in: iconRect)
+
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = .center
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 15, weight: .semibold),
+                .foregroundColor: UIColor.secondaryLabel,
+                .paragraphStyle: paragraph
+            ]
+            let textRect = CGRect(x: 18, y: 92, width: size.width - 36, height: 40)
+            (title.isEmpty ? "Image unavailable" : title).draw(in: textRect, withAttributes: attributes)
+        }
+    }
+
+    private static func targetWidth(for imageSize: CGSize, availableWidth: CGFloat) -> CGFloat {
+        let safeWidth = max(availableWidth, 180)
+        let aspectRatio = imageSize.width / max(imageSize.height, 1)
+        let maxWidth = min(safeWidth, 720)
+        let minWidth = min(220, maxWidth)
+        let sourceWidth = imageSize.width
+
+        let desiredWidth: CGFloat
+        if aspectRatio >= 1 {
+            desiredWidth = maxWidth
+        } else {
+            desiredWidth = max(minWidth, maxWidth * 0.7)
+        }
+
+        return min(desiredWidth, max(minWidth, sourceWidth))
     }
 }
 
