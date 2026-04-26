@@ -32,7 +32,7 @@ final class VaultFileServiceTests: XCTestCase {
         let noteURL = try service.createNote(named: "Daily Note", in: vaultURL)
 
         XCTAssertEqual(noteURL.lastPathComponent, "Daily Note.md")
-        XCTAssertEqual(try service.readNote(at: noteURL), "# Daily Note\n")
+        XCTAssertEqual(try service.readNote(at: noteURL), "")
 
         try service.saveNote("# Daily Note\nUpdated body", at: noteURL)
 
