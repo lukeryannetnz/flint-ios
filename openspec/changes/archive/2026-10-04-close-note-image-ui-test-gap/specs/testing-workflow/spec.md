@@ -43,7 +43,7 @@ The system SHALL include deterministic automated coverage for user-facing note i
 #### Scenario: Failed image insertion save can be retried
 - **GIVEN** an image has been inserted into an editable note
 - **WHEN** a deterministic test failure prevents saving the note
-- **THEN** Flint reports the save error and retains the unsaved edit for retry
+- **THEN** Flint reports the save error and retains the unsaved edit and referenced managed asset for retry
 - **AND** after the failure is removed, retrying the save persists the relative reference and its referenced managed asset
 
 #### Scenario: Default simulator lane runs image workflow coverage
@@ -60,12 +60,12 @@ The validation workflow SHALL treat an unexplained test failure as a failure eve
 - **AND** the change is not declared validated solely on the basis of the passing retry
 
 ### Requirement: Source adapter and permission changes require device validation
-Changes to image source adapters or permissions SHALL receive a recorded physical-device smoke test before being declared complete; unrelated changes retain optional device validation.
+Changes to production image source-adapter behavior or permissions SHALL receive a recorded physical-device smoke test before completion. Debug-only substitutes and unchanged callback extraction do not alone trigger this requirement. Other changes retain optional device validation.
 
 #### Scenario: Image source behavior or permissions change
-- **WHEN** a change modifies image source adapters or permissions
+- **WHEN** a change modifies production image source-adapter behavior or permissions
 - **THEN** actual affected Files, photo-library, or camera workflows are smoke-tested on a physical device
-- **AND** the outcome is recorded before the change is declared complete
+- **AND** the tested commit, device/iOS version, affected sources, and selection/capture, insertion, save/reopen, cancellation, and applicable permission-denial outcomes are recorded before completion
 
 #### Scenario: A required device is unavailable
 - **GIVEN** a change requires physical-device validation

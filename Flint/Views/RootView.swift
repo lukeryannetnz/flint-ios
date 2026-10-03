@@ -14,6 +14,32 @@ struct RootView: View {
                 VaultBrowserView(model: model)
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            #if DEBUG
+            if ImageWorkflowTestSupport.active {
+                VStack {
+                    Text(ImageWorkflowTestSupport.snapshot(model: model))
+                        .font(.system(size: 1))
+                        .accessibilityIdentifier("test.persistence")
+                    Button("Remove import source") {
+                        if let source = ImageWorkflowTestSupport.sourceURL {
+                            do { try FileManager.default.removeItem(at: source); model.objectWillChange.send() }
+                            catch { model.alertMessage = error.localizedDescription }
+                        }
+                    }
+                    .accessibilityIdentifier("test.remove-source")
+                    if ProcessInfo.processInfo.environment["FLINT_IMAGE_TEST_FAIL_SAVE"] == "1" {
+                        Button("Retry save") {
+                            ImageWorkflowSaveFailure.removed = true
+                            model.clearAlert()
+                            Task { await model.saveCurrentNoteIfNeeded() }
+                        }
+                        .accessibilityIdentifier("test.retry-save")
+                    }
+                }
+            }
+            #endif
+        }
         .task {
             await model.bootstrap()
         }

@@ -16,7 +16,7 @@ This leaves the most gesture-heavy and permission-adjacent parts of note images 
 - Ensure the new coverage runs as part of the required simulator test command.
 - Verify loaded-image state and visible bounds, preserve editor and saved content during viewing, and prove persistence after removing the import source and relaunching without reseeding.
 - Cover deterministic save failure and successful retry without losing the unsaved image edit.
-- Treat unexplained test failures as failures even if retries pass, and require recorded device smoke testing for image source adapter or permission changes before completion.
+- Treat unexplained test failures as failures even if retries pass, and require recorded device smoke testing for production image source-adapter behavior or permission changes before completion.
 
 ## Capabilities
 
@@ -33,4 +33,4 @@ None.
 - Affected areas: the new UI test target, existing integration tests, UI test launch configuration, isolated test fixtures, and image insertion test seams.
 - Likely code touch points: `Flint.xcodeproj`, `FlintUITests/`, `FlintTests/`, `Flint/Views/VaultBrowserView.swift`, and test-only launch/configuration helpers.
 - Risk: UI tests that depend on system pickers can become flaky, so the default lane should prefer deterministic fixtures or test seams while still validating Flint's own workflow behavior.
-- Device availability can delay completion when source adapter or permission changes require physical-device validation.
+- Device availability can delay completion when production source-adapter behavior or permission changes require physical-device validation.

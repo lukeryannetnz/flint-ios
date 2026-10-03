@@ -23,7 +23,7 @@ The editor and system source callbacks live in `VaultBrowserView.swift`. File an
 
 ### Use UI tests for gestures and integration tests for persistence
 
-Add `FlintUITests` to the shared Flint scheme's test action so the required simulator command runs both targets. UI tests launch the application, select fixture notes, inspect image/caption and broken-image presentation, open and dismiss the viewer, and insert images through the editor. Integration tests use the real file service and model for detailed managed-file and saved-markdown assertions.
+Add `FlintUITests` to the shared Flint scheme's test action so the required simulator command runs both targets. Reuse the existing test Debug/Release xcconfig files so optional device signing reads the contributor's untracked Local.xcconfig and no team identifier is committed. UI tests launch the application, select fixture notes, inspect image/caption and broken-image presentation, open and dismiss the viewer, and insert images through the editor. Integration tests use the real file service and model for detailed managed-file and saved-markdown assertions.
 
 Unit tests alone cannot establish that gesture routing or presentation works. UI tests alone make filesystem assertions unnecessarily difficult across the application-container boundary. Combining them covers these distinct responsibilities without replacing existing tests.
 
@@ -55,11 +55,11 @@ Each insertion-source test verifies the saved reference occurs between the text 
 
 ### Exercise save failure without replacing successful persistence
 
-Use deterministic save-failure injection in the test configuration to make the real save flow report an error. Assert that the editor retains the image edit and unsaved state. Remove the injected failure and retry through the normal save flow, then inspect the actual saved reference and managed asset. Asset lifecycle during a failed save remains an unresolved decision; the harness must not invent a cleanup policy.
+Use deterministic save-failure injection in the test configuration to make the real save flow report an error. Assert that the editor retains the image edit and unsaved state. Remove the injected failure and retry through the normal save flow, then inspect the actual saved reference and managed asset. Imported assets referenced by an unsaved edit are retained after save failure so retry can succeed; orphan cleanup is outside this change. The save-failure/retry case belongs in this change. The Debug harness injects a filesystem write error at the save boundary, leaving successful saves on the real file-service path.
 
 ### Preserve validation failures and require device evidence when applicable
 
-Record failed runs even when diagnostic retries pass. An unexplained failure prevents a successful validation claim. For changes to image source adapters or permissions, require a recorded physical-device smoke test of affected real source workflows before completion. If a suitable device is unavailable, report simulator results and keep device validation pending. Unrelated changes retain optional device validation.
+Record failed runs even when diagnostic retries pass. An unexplained failure prevents a successful validation claim. For changes to production image source-adapter behavior or permissions, require a recorded physical-device smoke test of affected real source workflows before completion. Debug-only source-result substitutes and extraction of unchanged callback bodies do not independently trigger this requirement. Record the tested commit, device/iOS version, affected sources, and selection/capture, insertion, save/reopen, cancellation, and applicable permission-denial outcomes. If a suitable device is unavailable, report simulator results and keep device validation pending. Unrelated changes retain optional device validation.
 
 Fixed delays and screenshot-only comparisons are weaker alternatives: delays race with saving, and screenshots cannot establish portable storage or unchanged markdown.
 
@@ -81,12 +81,6 @@ Compile fixture creation, source substitutes, cursor-position setup, and persist
 
 No vault or user-data migration is needed. Add the test target and Debug harness, implement the scenario coverage, and run the full required simulator suite. Update the archived image-work checklist with an explanatory correction that distinguishes source callback coverage from platform picker validation. Remove the new target and test hooks together if rollback is needed; existing tests and vault storage remain usable.
 
-## Open Questions
+## Settled Review Decisions
 
-The following decisions were not settled in the review and must be resolved before implementing the affected work:
-
-- Asset lifecycle after an unsuccessful save: whether and when an imported asset may be removed while an unsaved edit references it.
-- Required fields and cases in the recorded device smoke-test evidence.
-- Change scope and trigger classification: whether save-recovery implementation changes belong here or in a follow-up, and whether adding test substitutes alone counts as a source-adapter change requiring device validation.
-
-These questions do not weaken the agreed acceptance criteria. They block the relevant implementation and completion decisions rather than being silently assigned defaults.
+The user accepted retaining referenced assets while edits remain unsaved, including save-error/retry coverage in this change, and applying device validation to production adapter or permission changes rather than Debug-only substitutes. The device evidence fields and outcomes are defined above. This change does not intentionally change production picker behavior or permissions.

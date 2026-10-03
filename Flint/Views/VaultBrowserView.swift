@@ -351,6 +351,7 @@ private struct NoteDocumentView: View {
                                 pendingCommand = makeCommand(.endEditing)
                             } label: {
                                 Image(systemName: "keyboard.chevron.compact.down")
+                                    .accessibilityIdentifier("note.finish-editing")
                                     .font(.caption.weight(.semibold))
                             }
                             .buttonStyle(.plain)
@@ -412,36 +413,44 @@ private struct NoteDocumentView: View {
         }
         .confirmationDialog("Insert Image", isPresented: $isShowingImageSourcePicker, titleVisibility: .visible) {
             Button("Photo Library") {
+                #if DEBUG
+                if ImageWorkflowTestSupport.active, let url = ImageWorkflowTestSupport.sourceURL {
+                    acceptPhoto(ImportedImageSelection(url: url, preferredFilename: "Fixture"))
+                    return
+                }
+                #endif
                 isShowingPhotoPicker = true
             }
             Button("Take Photo") {
+                #if DEBUG
+                if ImageWorkflowTestSupport.active {
+                    acceptCamera(ImageWorkflowTestSupport.fixtureImage())
+                    return
+                }
+                #endif
                 isShowingCameraPicker = true
             }
             Button("Files") {
+                #if DEBUG
+                if ImageWorkflowTestSupport.active, let url = ImageWorkflowTestSupport.sourceURL {
+                    acceptFiles(.success([url]))
+                    return
+                }
+                #endif
                 isShowingFileImporter = true
             }
             Button("Cancel", role: .cancel) {}
         }
         .sheet(isPresented: $isShowingPhotoPicker) {
             PhotoLibraryImagePicker { selected in
-                isShowingPhotoPicker = false
-                Task {
-                    if let inserted = await onImportImageFile(selected.url, selected.preferredFilename) {
-                        pendingCommand = makeCommand(.insertImage(inserted))
-                    }
-                }
+                acceptPhoto(selected)
             } onCancel: {
                 isShowingPhotoPicker = false
             }
         }
         .sheet(isPresented: $isShowingCameraPicker) {
             CameraImagePicker { image in
-                isShowingCameraPicker = false
-                Task {
-                    if let inserted = await onImportCameraImage(image) {
-                        pendingCommand = makeCommand(.insertImage(inserted))
-                    }
-                }
+                acceptCamera(image)
             } onCancel: {
                 isShowingCameraPicker = false
             }
@@ -451,14 +460,7 @@ private struct NoteDocumentView: View {
             allowedContentTypes: [.image],
             allowsMultipleSelection: false
         ) { result in
-            isShowingFileImporter = false
-            guard case .success(let urls) = result, let url = urls.first else { return }
-            guard let importedFile = copyImportedFileToTemporaryLocation(url) else { return }
-            Task {
-                if let inserted = await onImportImageFile(importedFile.url, importedFile.preferredFilename) {
-                    pendingCommand = makeCommand(.insertImage(inserted))
-                }
-            }
+            acceptFiles(result)
         }
         .sheet(item: $imageViewerItem) { item in
             NoteImageViewer(item: item)
@@ -469,6 +471,35 @@ private struct NoteDocumentView: View {
             pendingCommand = nil
             pendingLink = "https://"
             imageViewerItem = nil
+        }
+    }
+
+    private func acceptPhoto(_ selected: ImportedImageSelection) {
+        isShowingPhotoPicker = false
+        importFile(selected)
+    }
+
+    private func acceptCamera(_ image: UIImage) {
+        isShowingCameraPicker = false
+        Task {
+            if let inserted = await onImportCameraImage(image) {
+                pendingCommand = makeCommand(.insertImage(inserted))
+            }
+        }
+    }
+
+    private func acceptFiles(_ result: Result<[URL], Error>) {
+        isShowingFileImporter = false
+        guard case .success(let urls) = result, let url = urls.first,
+              let selected = copyImportedFileToTemporaryLocation(url) else { return }
+        importFile(selected)
+    }
+
+    private func importFile(_ selected: ImportedImageSelection) {
+        Task {
+            if let inserted = await onImportImageFile(selected.url, selected.preferredFilename) {
+                pendingCommand = makeCommand(.insertImage(inserted))
+            }
         }
     }
 
@@ -619,6 +650,7 @@ private struct RichFormattingBar: View {
                     onInsertImage()
                 } label: {
                     Image(systemName: "photo.badge.plus")
+                        .accessibilityIdentifier("note.insert-image")
                 }
                 .modifier(ChromeButtonStyle(isActive: false))
             }
@@ -881,6 +913,10 @@ private struct RichTextNoteEditor: UIViewRepresentable {
 
     func makeUIView(context: Context) -> FlintRichTextView {
         let textView = FlintRichTextView()
+        textView.accessibilityIdentifier = "note.editor"
+        #if DEBUG
+        if ImageWorkflowTestSupport.active { textView.isAccessibilityElement = false }
+        #endif
         textView.delegate = context.coordinator
         textView.onReadTap = { [weak coordinator = context.coordinator] location in
             coordinator?.beginEditing(at: location)
@@ -1043,6 +1079,12 @@ private struct RichTextNoteEditor: UIViewRepresentable {
                     return
                 }
                 textView.selectedTextRange = textView.textRange(from: position, to: position)
+                #if DEBUG
+                if ImageWorkflowTestSupport.active {
+                    let marker = (textView.textStorage.string as NSString).range(of: "After")
+                    if marker.location != NSNotFound { textView.selectedRange = NSRange(location: marker.location, length: 0) }
+                }
+                #endif
                 self.lastKnownSelectedRange = textView.selectedRange
                 textView.becomeFirstResponder()
                 self.refreshStateAndMarkdown(from: textView)
@@ -1424,6 +1466,33 @@ private final class FlintRichTextView: UITextView {
     private var readTouchStartLocation: CGPoint?
     private var hasExceededReadTapTolerance = false
 
+    #if DEBUG
+    override var accessibilityElements: [Any]? {
+        get {
+            guard ImageWorkflowTestSupport.active else { return super.accessibilityElements }
+            var elements: [Any] = []
+            textStorage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: textStorage.length)) { value, range, _ in
+                guard let attachment = value as? FlintMarkdownImageAttachment else { return }
+                let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                var rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer)
+                rect.origin.x += textContainerInset.left
+                rect.origin.y += textContainerInset.top
+                let visible = rect.intersection(bounds)
+                guard !visible.isNull, visible.width > 0, visible.height > 0 else { return }
+                let element = UIAccessibilityElement(accessibilityContainer: self)
+                let loaded = attachment.assetURL.flatMap { UIImage(contentsOfFile: $0.path) } != nil && attachment.image != nil
+                element.accessibilityIdentifier = loaded ? "note.image.loaded" : "note.image.missing"
+                element.accessibilityLabel = attachment.altText
+                element.accessibilityTraits = .image
+                element.accessibilityFrame = convert(visible, to: nil)
+                elements.append(element)
+            }
+            return elements
+        }
+        set { super.accessibilityElements = newValue }
+    }
+    #endif
+
     override func layoutSubviews() {
         super.layoutSubviews()
         let widthChanged = stabilizeScrollGeometry()
@@ -1625,6 +1694,7 @@ private struct NoteImageViewer: View {
                     Button("Close") {
                         dismiss()
                     }
+                    .accessibilityIdentifier("image.viewer.close")
                 }
             }
             .toolbarBackground(.hidden, for: .navigationBar)

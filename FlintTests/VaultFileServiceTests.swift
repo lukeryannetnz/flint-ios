@@ -19,6 +19,59 @@ final class VaultFileServiceTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testImportedFileRemainsReadableAfterSourceRemovalAndModelRecreation() async throws {
+        try await verifyPersistedImage(camera: false)
+    }
+
+    @MainActor
+    func testCapturedImagePersistsAsJPEGAfterModelRecreation() async throws {
+        try await verifyPersistedImage(camera: true)
+    }
+
+    @MainActor
+    private func verifyPersistedImage(camera: Bool) async throws {
+        let vault = try service.createVault(named: "Portable", in: temporaryDirectoryURL)
+        let noteURL = try service.createNote(named: "Editable", in: vault)
+        try service.saveNote("Before\nAfter", at: noteURL)
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 240, height: 160)).image { context in
+            UIColor.orange.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 240, height: 160))
+        }
+        let source = temporaryDirectoryURL.appendingPathComponent("Original.png")
+        try XCTUnwrap(image.pngData()).write(to: source)
+        let model = AppModel(bookmarkStore: VaultBookmarkStore(userDefaults: UserDefaults(suiteName: UUID().uuidString)!), fileService: service)
+        await model.openVault(at: vault, persistSelection: false)
+        let note = try XCTUnwrap(model.notes.first { $0.url == noteURL })
+        await model.openNote(note)
+        let inserted: InsertedNoteImage?
+        if camera { inserted = await model.importCameraImage(image) }
+        else { inserted = await model.importImage(from: source, preferredFilename: "Fixture") }
+        let result = try XCTUnwrap(inserted)
+        XCTAssertEqual(result.assetURL.deletingLastPathComponent(), vault.appendingPathComponent("Editable Assets", isDirectory: true))
+        if camera {
+            XCTAssertEqual(result.assetURL.pathExtension, "jpg")
+            XCTAssertEqual(try Data(contentsOf: result.assetURL).prefix(2), Data([0xff, 0xd8]))
+        }
+        model.updateNoteText("Before\n" + result.markdownSource + "\nAfter")
+        await model.saveCurrentNoteIfNeeded()
+        XCTAssertFalse(model.hasUnsavedChanges)
+        try FileManager.default.removeItem(at: source)
+        let reopened = AppModel(bookmarkStore: VaultBookmarkStore(userDefaults: UserDefaults(suiteName: UUID().uuidString)!), fileService: VaultFileService())
+        await reopened.openVault(at: vault, persistSelection: false)
+        let reopenedNote = try XCTUnwrap(reopened.notes.first { $0.url == noteURL })
+        await reopened.openNote(reopenedNote)
+        XCTAssertEqual(reopened.noteText, "Before\n" + result.markdownSource + "\nAfter")
+        let attributed = FlintRichTextCodec.attributedString(from: reopened.noteText, noteURL: noteURL, vaultURL: vault)
+        var imageURLs: [URL] = []
+        attributed.enumerateAttribute(.flintImageAssetURL, in: NSRange(location: 0, length: attributed.length)) { value, _, _ in
+            if let url = value as? URL { imageURLs.append(url) }
+        }
+        XCTAssertTrue(imageURLs.contains(result.assetURL))
+        XCTAssertNotNil(UIImage(contentsOfFile: result.assetURL.path))
+        XCTAssertFalse(reopened.noteText.contains("file://"))
+    }
+
     func testCreateVaultCreatesNamedDirectory() throws {
         let vaultURL = try service.createVault(named: "My Vault", in: temporaryDirectoryURL)
 

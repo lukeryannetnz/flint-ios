@@ -137,6 +137,9 @@ final class VaultFileService: VaultFileServing {
     }
 
     func saveNote(_ text: String, at url: URL) throws {
+        #if DEBUG
+        if ImageWorkflowSaveFailure.enabled { throw CocoaError(.fileWriteNoPermission) }
+        #endif
         try coordinatedWrite(at: url) { coordinatedURL in
             guard fileManager.fileExists(atPath: coordinatedURL.path) else {
                 throw VaultError.noteMissing

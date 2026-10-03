@@ -34,6 +34,20 @@ final class AppModel: ObservableObject {
         guard !didBootstrap else { return }
         didBootstrap = true
 
+        #if DEBUG
+        if ImageWorkflowTestSupport.active {
+            do {
+                let root = try ImageWorkflowTestSupport.prepare()
+                await openVault(at: root, persistSelection: false)
+                let name = ProcessInfo.processInfo.environment["FLINT_IMAGE_TEST_NOTE"] ?? "Existing.md"
+                if let note = notes.first(where: { $0.url.lastPathComponent == name }) {
+                    await openNote(note)
+                }
+            } catch { alertMessage = error.localizedDescription; phase = .onboarding }
+            return
+        }
+        #endif
+
         guard let bookmarkData = bookmarkStore.loadBookmarkData() else {
             phase = .onboarding
             return
