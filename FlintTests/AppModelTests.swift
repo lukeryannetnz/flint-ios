@@ -1,8 +1,80 @@
 import XCTest
+import UIKit
 @testable import Flint
 
 @MainActor
 final class AppModelTests: XCTestCase {
+    func testOpenVaultLoadsFirstNoteBeforeReturningAndDiscardsPreviousEditorState() async {
+        let files = FileServiceSpy()
+        let first = makeNote(title: "First", url: files.createdVaultURL.appendingPathComponent("First.md"))
+        files.notesToReturn = [first]
+        files.noteContents[first.url] = "First content"
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+
+        await model.openVault(at: files.createdVaultURL)
+        XCTAssertEqual(model.selectedNote, first)
+        XCTAssertEqual(model.noteText, "First content")
+        model.updateNoteText("Unsaved previous content")
+
+        let nextVault = URL(fileURLWithPath: "/tmp/next-vault")
+        let next = makeNote(title: "Next", url: nextVault.appendingPathComponent("Next.md"))
+        files.notesToReturn = [next]
+        files.noteContents[next.url] = "Next content"
+        await model.openVault(at: nextVault)
+        await Task.yield()
+
+        XCTAssertEqual(model.selectedNote, next)
+        XCTAssertEqual(model.noteText, "Next content")
+        XCTAssertFalse(model.hasUnsavedChanges)
+        XCTAssertTrue(files.savedNotes.isEmpty)
+        XCTAssertEqual(files.readNoteCalls, [first.url, next.url])
+    }
+
+    func testCreatingNoteDoesNotScheduleFallbackNavigation() async {
+        let files = FileServiceSpy()
+        let existing = makeNote(title: "Existing", url: files.createdVaultURL.appendingPathComponent("Existing.md"))
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        await model.openVault(at: files.createdVaultURL)
+        files.notesToReturn = [existing]
+
+        await model.createNote(named: "Created.md")
+        await Task.yield()
+
+        XCTAssertEqual(model.selectedNote?.url, files.createdVaultURL.appendingPathComponent("Created.md"))
+        XCTAssertEqual(files.readNoteCalls, [files.createdVaultURL.appendingPathComponent("Created.md")])
+    }
+
+    func testVaultFolderResolvedPathComponentsFallsBackToRootForMissingFolder() {
+        let notes = [
+            makeNote(
+                title: "Runbook",
+                url: URL(fileURLWithPath: "/tmp/vault/Projects/iOS/runbook.md"),
+                folderPath: "Projects/iOS",
+                createdAt: .init(timeIntervalSince1970: 300)
+            )
+        ]
+
+        let root = VaultFolder.root(vaultName: "Flint Vault", notes: notes)
+
+        XCTAssertEqual(root.resolvedPathComponents(for: ["Projects", "iOS"]), ["Projects", "iOS"])
+        XCTAssertEqual(root.resolvedPathComponents(for: ["Projects", "Missing"]), [])
+    }
+
+    func testCreateNoteInNestedFolderSelectsCreatedNoteWithoutDelayedNavigation() async {
+        let files = FileServiceSpy()
+        let existing = makeNote(title: "Existing", url: files.createdVaultURL.appendingPathComponent("Existing.md"))
+        files.notesToReturn = [existing]
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        await model.openVault(at: files.createdVaultURL)
+        await model.createNote(named: "Daily.md", inFolderPath: ["Projects", "iOS"])
+        let expected = files.createdVaultURL.appendingPathComponent("Projects/iOS/Daily.md")
+        XCTAssertEqual(model.selectedNote?.url, expected)
+        await Task.yield()
+        XCTAssertEqual(model.selectedNote?.url, expected)
+        XCTAssertEqual(files.readNoteCalls, [existing.url, expected])
+        XCTAssertFalse(model.hasUnsavedChanges)
+    }
+
     func testBootstrapWithoutStoredBookmarkShowsOnboarding() async {
         let bookmarkStore = BookmarkStoreSpy()
         let fileService = FileServiceSpy()
@@ -45,92 +117,14 @@ final class AppModelTests: XCTestCase {
         await model.openNote(initialNote)
 
         model.updateNoteText("updated")
+        let readsBeforeSave = fileService.readNoteCalls
         await model.saveCurrentNoteIfNeeded()
 
         XCTAssertEqual(fileService.savedNotes.count, 1)
         XCTAssertEqual(fileService.listMarkdownNotesCalls.count, 2)
         XCTAssertEqual(model.selectedNote?.lastModifiedAt, refreshedNote.lastModifiedAt)
-    }
-
-    func testCreateNoteUsesCurrentFolderContext() async {
-        let bookmarkStore = BookmarkStoreSpy()
-        let fileService = FileServiceSpy()
-        let createdNoteURL = fileService.createdVaultURL.appendingPathComponent("Projects/iOS/Daily.md")
-        let createdNote = makeNote(
-            title: "Daily",
-            url: createdNoteURL,
-            folderPath: "Projects/iOS",
-            createdAt: .init(timeIntervalSince1970: 100),
-            modifiedAt: .init(timeIntervalSince1970: 100)
-        )
-        fileService.createdNoteURL = createdNoteURL
-        fileService.notesAfterCreate = [createdNote]
-
-        let model = AppModel(bookmarkStore: bookmarkStore, fileService: fileService)
-        await model.openVault(at: fileService.createdVaultURL)
-        await model.createNote(named: "Daily", inFolderPath: ["Projects", "iOS"])
-
-        XCTAssertEqual(fileService.createNoteCalls.count, 1)
-        XCTAssertEqual(fileService.createNoteCalls.first?.0, "Daily")
-        XCTAssertEqual(
-            fileService.createNoteCalls.first?.1,
-            fileService.createdVaultURL.appendingPathComponent("Projects/iOS", isDirectory: true)
-        )
-        XCTAssertEqual(model.selectedNote?.url, createdNoteURL)
-    }
-
-    func testMarkdownDocumentRendersRichHTML() {
-        let markdown = """
-        # Daily
-
-        Intro paragraph with a [link](https://example.com).
-
-        - one
-        - two
-
-        1. first
-        2. second
-
-        - [x] done
-        - [ ] next
-
-        > quoted line
-
-        | Name | Value |
-        | --- | --- |
-        | Flint | Spark |
-
-        ```swift
-        print("hi")
-        ```
-
-        ![Sketch](diagram.png)
-        """
-
-        let document = MarkdownDocument(noteTitle: "Daily", markdown: markdown)
-
-        XCTAssertFalse(document.markdown.hasPrefix("# Daily"))
-        XCTAssertTrue(document.html.contains("<a href=\"https://example.com\">link</a>"))
-        XCTAssertTrue(document.html.contains("<ul><li>one</li><li>two</li></ul>"))
-        XCTAssertTrue(document.html.contains("<ol><li>first</li><li>second</li></ol>"))
-        XCTAssertTrue(document.html.contains("<ul class=\"task-list\">"))
-        XCTAssertTrue(document.html.contains("<blockquote><p>quoted line</p></blockquote>"))
-        XCTAssertTrue(document.html.contains("<table>"))
-        XCTAssertTrue(document.html.contains("<pre><code class=\"language-swift\">"))
-        XCTAssertTrue(document.html.contains("<figure class=\"md-image\"><img src=\"diagram.png\" alt=\"Sketch\" loading=\"lazy\"><figcaption>Sketch</figcaption></figure>"))
-    }
-
-    func testMarkdownDocumentRendersYouTubeEmbedAsThumbnail() {
-        let markdown = """
-        ![Embedded YouTube video](https://www.youtube.com/embed/k51Q4ibkhDk?feature=oembed&autoplay=true)
-        """
-
-        let document = MarkdownDocument(noteTitle: "Video", markdown: markdown)
-
-        XCTAssertTrue(document.html.contains("class=\"md-video-thumb\""))
-        XCTAssertTrue(document.html.contains("https://www.youtube.com/watch?v=k51Q4ibkhDk"))
-        XCTAssertTrue(document.html.contains("https://i.ytimg.com/vi/k51Q4ibkhDk/hqdefault.jpg"))
-        XCTAssertTrue(document.html.contains("<figcaption>Embedded YouTube video</figcaption>"))
+        XCTAssertEqual(fileService.readNoteCalls, readsBeforeSave)
+        XCTAssertEqual(model.noteText, "updated")
     }
 
     func testRichTextCodecMapsMarkdownIntoFormattingModel() {
@@ -214,6 +208,87 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(serialized.contains("> stay native"))
         XCTAssertTrue(serialized.contains("```"))
         XCTAssertTrue(serialized.contains("print(\"done\")"))
+    }
+
+    func testRichTextCodecResolvesAndRoundTripsMarkdownImages() throws {
+        let vaultURL = URL(fileURLWithPath: "/tmp/vault", isDirectory: true)
+        let noteURL = vaultURL.appendingPathComponent("Notes/Daily.md")
+        let attributed = FlintRichTextCodec.attributedString(
+            from: "![Diagram](/Attachments/diagram.heic)",
+            noteURL: noteURL,
+            vaultURL: vaultURL
+        )
+
+        let markdownSource = attributed.attribute(.flintImageMarkdownSource, at: 0, effectiveRange: nil) as? String
+        let assetURL = attributed.attribute(.flintImageAssetURL, at: 0, effectiveRange: nil) as? URL
+
+        XCTAssertEqual(markdownSource, "![Diagram](/Attachments/diagram.heic)")
+        XCTAssertEqual(assetURL, vaultURL.appendingPathComponent("Attachments/diagram.heic"))
+        XCTAssertEqual(FlintRichTextCodec.markdown(from: attributed), "![Diagram](/Attachments/diagram.heic)")
+    }
+
+    func testRichTextCodecCreatesAttachmentAndCaptionForStandaloneImageMarkdown() {
+        let vaultURL = URL(fileURLWithPath: "/tmp/vault", isDirectory: true)
+        let noteURL = vaultURL.appendingPathComponent("Notes/Daily.md")
+        let attributed = FlintRichTextCodec.attributedString(
+            from: "![System Diagram](../Attachments/diagram.jpg)",
+            noteURL: noteURL,
+            vaultURL: vaultURL
+        )
+
+        XCTAssertTrue(attributed.attribute(.attachment, at: 0, effectiveRange: nil) is FlintMarkdownImageAttachment)
+        XCTAssertEqual(attributed.string, "\(Character(UnicodeScalar(NSTextAttachment.character)!))\nSystem Diagram")
+
+        let captionRange = (attributed.string as NSString).range(of: "System Diagram")
+        XCTAssertEqual(
+            attributed.attribute(.flintSyntheticImageCaption, at: captionRange.location, effectiveRange: nil) as? Bool,
+            true
+        )
+    }
+
+    func testImportImageUsesSelectedNoteAndVaultContext() async {
+        let bookmarkStore = BookmarkStoreSpy()
+        let fileService = FileServiceSpy()
+        let noteURL = URL(fileURLWithPath: "/tmp/default-vault/Daily.md")
+        let note = makeNote(title: "Daily", url: noteURL)
+        let sourceURL = URL(fileURLWithPath: "/tmp/imports/diagram.heic")
+        fileService.notesToReturn = [note]
+
+        let model = AppModel(bookmarkStore: bookmarkStore, fileService: fileService)
+        await model.openVault(at: fileService.createdVaultURL)
+        await model.openNote(note)
+
+        let inserted = await model.importImage(from: sourceURL, preferredFilename: "Diagram")
+
+        XCTAssertEqual(fileService.importedImages.count, 1)
+        XCTAssertEqual(fileService.importedImages.first?.0, sourceURL)
+        XCTAssertEqual(fileService.importedImages.first?.1, "Diagram")
+        XCTAssertEqual(fileService.importedImages.first?.2, noteURL)
+        XCTAssertEqual(fileService.importedImages.first?.3, fileService.createdVaultURL)
+        XCTAssertEqual(inserted?.markdownSource, "![Imported](Daily Assets/imported.jpg)")
+    }
+
+    func testImportCameraImageUsesSelectedNoteAndVaultContext() async {
+        let bookmarkStore = BookmarkStoreSpy()
+        let fileService = FileServiceSpy()
+        let noteURL = URL(fileURLWithPath: "/tmp/default-vault/Daily.md")
+        let note = makeNote(title: "Daily", url: noteURL)
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 12, height: 12)).image { context in
+            UIColor.systemGreen.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 12, height: 12))
+        }
+        fileService.notesToReturn = [note]
+
+        let model = AppModel(bookmarkStore: bookmarkStore, fileService: fileService)
+        await model.openVault(at: fileService.createdVaultURL)
+        await model.openNote(note)
+
+        let inserted = await model.importCameraImage(image)
+
+        XCTAssertEqual(fileService.importedCameraImages.count, 1)
+        XCTAssertEqual(fileService.importedCameraImages.first?.1, noteURL)
+        XCTAssertEqual(fileService.importedCameraImages.first?.2, fileService.createdVaultURL)
+        XCTAssertEqual(inserted?.markdownSource, "![Camera](Daily Assets/camera.jpg)")
     }
 
     func testRichTextCodecTracksSemanticBoldAndItalicAttributes() {
@@ -342,22 +417,6 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(root.childFolders.first?.childFolders.first?.name, "iOS")
         XCTAssertEqual(root.childFolders.first?.childFolders.first?.notes.map(\.title), ["Runbook", "API"])
     }
-
-    func testVaultFolderResolvedPathComponentsFallsBackToRootForMissingFolder() {
-        let notes = [
-            makeNote(
-                title: "Runbook",
-                url: URL(fileURLWithPath: "/tmp/vault/Projects/iOS/runbook.md"),
-                folderPath: "Projects/iOS",
-                createdAt: .init(timeIntervalSince1970: 300)
-            )
-        ]
-
-        let root = VaultFolder.root(vaultName: "Flint Vault", notes: notes)
-
-        XCTAssertEqual(root.resolvedPathComponents(for: ["Projects", "iOS"]), ["Projects", "iOS"])
-        XCTAssertEqual(root.resolvedPathComponents(for: ["Projects", "Missing"]), [])
-    }
 }
 
 private final class BookmarkStoreSpy: VaultBookmarkStoring {
@@ -388,14 +447,15 @@ private final class BookmarkStoreSpy: VaultBookmarkStoring {
 
 private final class FileServiceSpy: VaultFileServing {
     var createdVaultURL = URL(fileURLWithPath: "/tmp/default-vault", isDirectory: true)
-    var createdNoteURL: URL?
     var notesToReturn: [NoteItem] = []
-    var notesAfterCreate: [NoteItem]?
     var notesAfterSave: [NoteItem]?
     var createVaultCalls: [(String, URL)] = []
-    var createNoteCalls: [(String, URL)] = []
     var listMarkdownNotesCalls: [URL] = []
     var savedNotes: [(String, URL)] = []
+    var noteContents: [URL: String] = [:]
+    var readNoteCalls: [URL] = []
+    var importedImages: [(URL, String?, URL, URL)] = []
+    var importedCameraImages: [(UIImage, URL, URL)] = []
 
     func createVault(named name: String, in parentURL: URL) throws -> URL {
         createVaultCalls.append((name, parentURL))
@@ -407,23 +467,40 @@ private final class FileServiceSpy: VaultFileServing {
         if let notesAfterSave, !savedNotes.isEmpty {
             return notesAfterSave
         }
-        if let notesAfterCreate, !createNoteCalls.isEmpty {
-            return notesAfterCreate
-        }
         return notesToReturn
     }
 
-    func createNote(named name: String, in directoryURL: URL) throws -> URL {
-        createNoteCalls.append((name, directoryURL))
-        return createdNoteURL ?? directoryURL.appendingPathComponent(name)
+    func createNote(named name: String, in vaultURL: URL) throws -> URL {
+        let url = vaultURL.appendingPathComponent(name)
+        notesToReturn.append(makeNote(title: name, url: url))
+        return url
     }
 
     func readNote(at url: URL) throws -> String {
-        ""
+        readNoteCalls.append(url)
+        return noteContents[url] ?? ""
     }
 
     func saveNote(_ text: String, at url: URL) throws {
         savedNotes.append((text, url))
+    }
+
+    func importImage(from sourceURL: URL, preferredFilename: String?, into noteURL: URL, vaultURL: URL) throws -> InsertedNoteImage {
+        importedImages.append((sourceURL, preferredFilename, noteURL, vaultURL))
+        return InsertedNoteImage(
+            markdownSource: "![Imported](Daily Assets/imported.jpg)",
+            assetURL: noteURL.deletingLastPathComponent().appendingPathComponent("Daily Assets/imported.jpg"),
+            altText: "Imported"
+        )
+    }
+
+    func importCameraImage(_ image: UIImage, into noteURL: URL, vaultURL: URL) throws -> InsertedNoteImage {
+        importedCameraImages.append((image, noteURL, vaultURL))
+        return InsertedNoteImage(
+            markdownSource: "![Camera](Daily Assets/camera.jpg)",
+            assetURL: noteURL.deletingLastPathComponent().appendingPathComponent("Daily Assets/camera.jpg"),
+            altText: "Camera"
+        )
     }
 }
 

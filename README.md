@@ -17,6 +17,10 @@ Strike a spark. Keep every note in a markdown vault you own.
 
 ## Architecture
 
+- `Flint/Models.swift`: Foundation-only vault and note values, folder organization, and list preview helpers.
+- `Flint/Documents/FlintRichTextCodec.swift`: native rich text conversion, semantic formatting, and markdown serialization.
+- `Flint/Documents/FlintMarkdownImageAttachment.swift`: UIKit image attachments, captions, and layout rendering.
+- `Flint/Documents/MarkdownDocument.swift`: Foundation-only markdown normalization and cached HTML rendering.
 - `Flint/ViewModels/AppModel.swift`: app state and vault lifecycle orchestration.
 - `Flint/Services/VaultBookmarkStore.swift`: bookmark persistence for reopening external folders.
 - `Flint/Services/VaultFileService.swift`: coordinated file-system access for vault and note operations.

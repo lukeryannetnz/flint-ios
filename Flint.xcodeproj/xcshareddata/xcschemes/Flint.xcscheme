@@ -54,7 +54,7 @@
                ReferencedContainer = "container:Flint.xcodeproj">
             </BuildableReference>
          </TestableReference>
-      </Testables>
+      <TestableReference skipped="NO" parallelizable="NO"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="B20000000000000000000008" BuildableName="FlintUITests.xctest" BlueprintName="FlintUITests" ReferencedContainer="container:Flint.xcodeproj" /></TestableReference></Testables>
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
