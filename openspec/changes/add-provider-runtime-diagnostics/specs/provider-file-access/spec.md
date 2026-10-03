@@ -1,0 +1,165 @@
+# provider-file-access Specification
+
+## Purpose
+
+Define intended responsive, bounded, and data-safe file access for local and Files-provider vaults, including partially downloaded Dropbox content. These requirements are planned and do not claim implementation is complete.
+
+## ADDED Requirements
+
+### Requirement: Isolate blocking file and image work from the main actor
+
+The system SHALL perform bookmark resolution/creation, security-scoped resource acquisition, file coordination, enumeration, resource metadata lookup, note and preview reads, note/vault creation, note writes, image import/copy/encoding, image file reads, and image decoding outside the main actor. UI state publication and UIKit view updates SHALL remain on the main actor. Wrapping synchronous work in a main-actor Task SHALL NOT satisfy this requirement.
+
+#### Scenario: Restore a provider-backed vault
+
+- WHEN Flint opens a saved Dropbox vault whose files are partially downloaded
+- THEN waiting for the provider does not block rendering, taps, loading progress, cancellation, or diagnostics export
+- AND bookmark and security-scope setup do not perform synchronous provider work on the UI thread
+- AND file coordination continues to protect provider-backed reads and writes
+
+### Requirement: Bound loading attempts and cancellation
+
+The system SHALL expose cancellable loading, a slow state after 5 seconds, and a usable screen or recoverable failure within 30 seconds of foreground-active time. Foreground note/image reads and imports SHALL use the same deadline. Attempts SHALL reject stale completion, keep access valid until workers stop, and use bounded work capacity. Background suspension SHALL pause UI deadlines.
+
+#### Scenario: Bound queued and active provider work
+
+- WHEN provider work is scheduled or retried
+- THEN no more than two blocking jobs run globally and no more than one runs for a given vault
+- AND no more than 32 jobs wait in the pending queue
+- AND cancelled queued jobs are removed
+- AND deadlines request cancellation without assuming an already-running accessor has stopped
+- AND every attempt carries an identity that rejects stale completion
+
+#### Scenario: Accessor remains blocked after timeout
+
+- GIVEN one vault operation is still blocked inside an accessor
+- WHEN the loading deadline expires
+- THEN the UI offers Retry, Choose another vault, and Export diagnostics without awaiting that accessor
+- AND another vault can use the remaining worker slot
+- AND retrying the same vault reports that previous work is still stopping instead of adding concurrent jobs for that vault
+- AND if both slots are blocked, selecting another vault returns a recoverable busy state without creating more workers
+- AND late success or failure cannot replace the current vault, text, selection, or alert
+- AND security-scoped access used by the worker is released only after its actual completion
+
+### Requirement: Discover notes without eagerly reading all content
+
+The system SHALL discover note metadata incrementally without eagerly reading content, preserve supported file filters and sort rules, and publish usable partial results. Previews SHALL be demand-driven with bounded reads and caching. Progress SHALL report observed counts and stages without inventing a total or download percentage.
+
+#### Scenario: Bound preview work
+
+- WHEN visible or recently requested notes need previews
+- THEN each preview reads no more than 64 KiB of source and decodes only complete UTF-8 sequences
+- AND omitted, truncated, and unavailable previews are distinguishable
+- AND the preview cache stays within 4 MiB and invalidates on observed content-version changes or explicit refresh
+- AND discovery preserves regular-file filtering, hidden-file exclusion, supported extensions, relative paths, and existing sort rules
+
+#### Scenario: One provider item is unavailable
+
+- GIVEN enumeration has produced usable note metadata
+- WHEN a metadata or preview lookup for another item fails or stalls
+- THEN already discovered notes remain available
+- AND affected previews use an unavailable or pending state rather than blocking the browser
+- AND the failure is recorded with its operation stage
+- AND discovery failure after partial progress is visible and retryable
+
+### Requirement: Select initial content without forcing a download of every note
+
+The system SHALL show the browser once usable metadata is available and separately expose selected-note loading. It SHALL choose the first available note according to the existing ordering when no selection can be preserved, but SHALL allow cancellation or selection of another note while that content is unavailable. Reading failures SHALL NOT masquerade as empty notes.
+
+#### Scenario: First note content is not available
+
+- WHEN Flint discovers a note but cannot finish reading its content
+- THEN the browser remains usable with a pending or recoverable selected-note state
+- AND the editor does not permit saving placeholder text over that file
+- AND other discovered notes can be selected
+- AND no background fallback selection overrides a later user selection
+
+### Requirement: Preserve edits across asynchronous saves and navigation
+
+The system SHALL capture destination, access lease, text revision, and operation identity for ordered, debounced saves. Completion SHALL clear dirty state only for the current revision. Failed or timed-out writes SHALL retain edits; timed-out writes SHALL report uncertain outcomes and prohibit overlapping retries. Navigation SHALL persist edits or obtain an explicit retain/discard choice.
+
+#### Scenario: Retry after an uncertain write
+
+- WHEN a write exceeds its deadline while its accessor remains active
+- THEN Flint retains text and dirty state and reports an uncertain outcome
+- AND retry waits for the original write to finish rather than overlapping it
+- AND save identity retains its original destination and lease
+- AND choosing to retain edits creates a local recovery copy separate from diagnostics
+
+#### Scenario: User types while a save is in progress
+
+- GIVEN revision A is being written
+- WHEN the user creates revision B before A finishes
+- THEN completion of A does not mark B saved or overwrite B in the editor
+- AND B remains eligible for a subsequent ordered autosave
+
+#### Scenario: User changes vault with pending edits
+
+- WHEN the user switches vault while edits or a write are pending
+- THEN Flint resolves the save or obtains an explicit retain/discard choice before replacing editor state
+- AND the old operation retains its original destination and cannot write into the new vault
+- AND cancellation does not claim that an already-running write was rolled back
+
+### Requirement: Bound editable note content
+
+The system SHALL limit a single editable note read to 8 MiB of source bytes, enforce the limit during the read even when size metadata is absent, and report an oversized note as a recoverable read failure. It SHALL NOT silently truncate editable markdown or permit saving a partial read over its source. Markdown preparation SHALL not synchronously read referenced assets.
+
+#### Scenario: Large or growing provider note
+
+- WHEN the source exceeds the editable-note limit or grows beyond it during loading
+- THEN Flint stops accumulating source bytes and shows a size-limit error
+- AND the browser remains usable
+- AND the file is unchanged and cannot be overwritten through a partial editor document
+
+### Requirement: Load and decode images lazily with bounded memory
+
+The system SHALL resolve, load, and downsample images asynchronously, show stable pending placeholders, and perform no provider reads or decoding in layout or initial text construction. Image work and cache memory SHALL remain bounded and respond to memory warnings. File/version and target-size caching SHALL avoid source rereads during ordinary relayout.
+
+#### Scenario: Bound decode and cache resources
+
+- WHEN image requests are processed
+- THEN no more than one image decode is active
+- AND decoded thumbnails have a longest edge of at most 2048 pixels and viewer images at most 4096 pixels
+- AND downsampling does not first decode a full-resolution source image
+- AND reusable decoded images consume at most 32 MiB of cache memory
+- AND memory warnings evict reusable images and cancel optional queued work
+
+#### Scenario: Large provider image appears in a note
+
+- WHEN an inline image is not yet downloaded or has a large source resolution
+- THEN text renders and remains interactive while the image loads
+- AND layout does not synchronously request source bytes or decode the image
+- AND successful completion updates only an attachment belonging to the current document generation
+- AND the caption and stored markdown reference remain unchanged
+- AND unavailable, invalid, or failed images retain a readable placeholder and retry affordance
+
+#### Scenario: Viewer opens during image loading
+
+- WHEN the user opens an image in the fullscreen viewer
+- THEN the viewer shows progress and permits dismissal while the image is read and downsampled
+- AND a late completion cannot reopen a dismissed viewer or affect another note
+
+### Requirement: Import images without blocking editing or losing managed assets
+
+The system SHALL copy or encode selected image sources into managed vault assets off the main actor and insert markdown only after a successful import for the current document generation. The import SHALL retain required source and destination access for its actual duration. A failed or cancelled import SHALL not report successful insertion; any completed but unreferenced asset SHALL be handled separately without deleting assets referenced by unsaved or saved text.
+
+#### Scenario: Provider source becomes unavailable during import
+
+- WHEN an image source read or managed-asset write fails
+- THEN the editor remains responsive and retains its original text and insertion intent
+- AND Flint records the failed stage and offers a retryable error
+- AND a late import cannot insert an image into a different note
+
+### Requirement: Verify responsiveness and data integrity
+
+The implementation SHALL include deterministic tests with controllable blocking reads/writes, clocks, cancellation, queue saturation, stale completion, preview budgets, revision ordering, large image sources, and memory warnings. It SHALL record physical-iPhone Dropbox validation and an Instruments trace before the change is considered validated.
+
+#### Scenario: Device performance acceptance
+
+- GIVEN fully downloaded and partially downloaded Dropbox vault fixtures with large notes and images
+- WHEN launch, scrolling, note switching, autosave, image insertion, and viewer dismissal are exercised online and offline
+- THEN no provider wait or image decode appears on the main-thread trace
+- AND stalled loading exposes recovery within 30 seconds of foreground-active time
+- AND taps and scrolling remain responsive during delayed I/O
+- AND memory and concurrency stay within the stated budgets
+- AND saved markdown and referenced assets remain intact after failure, retry, and relaunch

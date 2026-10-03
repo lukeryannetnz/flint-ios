@@ -1,4 +1,10 @@
-## ADDED Requirements
+# note-images Specification
+
+## Purpose
+
+Define portable markdown image references, inline media cards, fullscreen viewing, and managed image insertion within Flint vaults.
+
+## Requirements
 
 ### Requirement: Resolve markdown image references across the active vault
 The system SHALL resolve markdown image references for an open note using the note's folder as the base location while allowing referenced assets to live anywhere inside the active vault, including vault-rooted paths.
