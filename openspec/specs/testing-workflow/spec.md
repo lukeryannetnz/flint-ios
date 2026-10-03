@@ -113,3 +113,12 @@ Changes to production image source-adapter behavior or permissions SHALL receive
 - **WHEN** no suitable device is available
 - **THEN** simulator validation may finish
 - **AND** the change remains awaiting device validation and is not declared complete
+
+### Requirement: Folder-aware note creation has automated coverage
+The default simulator lane SHALL verify that creating a note uses the destination displayed in the creation sheet, including a nested folder and Recent mode after browsing that folder. Coverage SHALL also verify nested note selection completes without delayed fallback navigation, duplicate names within a destination are rejected, and matching filenames in different folders are allowed.
+
+#### Scenario: Create notes through the folder browser and Recent mode
+- **GIVEN** a deterministic test vault contains a nested folder
+- **WHEN** the automated test browses that folder and creates a note
+- **THEN** the sheet displays that folder and the created note is stored there
+- **AND** after switching to Recent mode, the sheet displays Vault Root and creation stores the note at the root
