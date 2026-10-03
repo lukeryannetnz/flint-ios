@@ -4,6 +4,46 @@ import UIKit
 
 @MainActor
 final class AppModelTests: XCTestCase {
+    func testOpenVaultLoadsFirstNoteBeforeReturningAndDiscardsPreviousEditorState() async {
+        let files = FileServiceSpy()
+        let first = makeNote(title: "First", url: files.createdVaultURL.appendingPathComponent("First.md"))
+        files.notesToReturn = [first]
+        files.noteContents[first.url] = "First content"
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+
+        await model.openVault(at: files.createdVaultURL)
+        XCTAssertEqual(model.selectedNote, first)
+        XCTAssertEqual(model.noteText, "First content")
+        model.updateNoteText("Unsaved previous content")
+
+        let nextVault = URL(fileURLWithPath: "/tmp/next-vault")
+        let next = makeNote(title: "Next", url: nextVault.appendingPathComponent("Next.md"))
+        files.notesToReturn = [next]
+        files.noteContents[next.url] = "Next content"
+        await model.openVault(at: nextVault)
+        await Task.yield()
+
+        XCTAssertEqual(model.selectedNote, next)
+        XCTAssertEqual(model.noteText, "Next content")
+        XCTAssertFalse(model.hasUnsavedChanges)
+        XCTAssertTrue(files.savedNotes.isEmpty)
+        XCTAssertEqual(files.readNoteCalls, [first.url, next.url])
+    }
+
+    func testCreatingNoteDoesNotScheduleFallbackNavigation() async {
+        let files = FileServiceSpy()
+        let existing = makeNote(title: "Existing", url: files.createdVaultURL.appendingPathComponent("Existing.md"))
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        await model.openVault(at: files.createdVaultURL)
+        files.notesToReturn = [existing]
+
+        await model.createNote(named: "Created.md")
+        await Task.yield()
+
+        XCTAssertEqual(model.selectedNote?.url, files.createdVaultURL.appendingPathComponent("Created.md"))
+        XCTAssertEqual(files.readNoteCalls, [files.createdVaultURL.appendingPathComponent("Created.md")])
+    }
+
     func testBootstrapWithoutStoredBookmarkShowsOnboarding() async {
         let bookmarkStore = BookmarkStoreSpy()
         let fileService = FileServiceSpy()
@@ -46,11 +86,14 @@ final class AppModelTests: XCTestCase {
         await model.openNote(initialNote)
 
         model.updateNoteText("updated")
+        let readsBeforeSave = fileService.readNoteCalls
         await model.saveCurrentNoteIfNeeded()
 
         XCTAssertEqual(fileService.savedNotes.count, 1)
         XCTAssertEqual(fileService.listMarkdownNotesCalls.count, 2)
         XCTAssertEqual(model.selectedNote?.lastModifiedAt, refreshedNote.lastModifiedAt)
+        XCTAssertEqual(fileService.readNoteCalls, readsBeforeSave)
+        XCTAssertEqual(model.noteText, "updated")
     }
 
     func testRichTextCodecMapsMarkdownIntoFormattingModel() {
@@ -378,6 +421,8 @@ private final class FileServiceSpy: VaultFileServing {
     var createVaultCalls: [(String, URL)] = []
     var listMarkdownNotesCalls: [URL] = []
     var savedNotes: [(String, URL)] = []
+    var noteContents: [URL: String] = [:]
+    var readNoteCalls: [URL] = []
     var importedImages: [(URL, String?, URL, URL)] = []
     var importedCameraImages: [(UIImage, URL, URL)] = []
 
@@ -395,11 +440,14 @@ private final class FileServiceSpy: VaultFileServing {
     }
 
     func createNote(named name: String, in vaultURL: URL) throws -> URL {
-        vaultURL.appendingPathComponent(name)
+        let url = vaultURL.appendingPathComponent(name)
+        notesToReturn.append(makeNote(title: name, url: url))
+        return url
     }
 
     func readNote(at url: URL) throws -> String {
-        ""
+        readNoteCalls.append(url)
+        return noteContents[url] ?? ""
     }
 
     func saveNote(_ text: String, at url: URL) throws {

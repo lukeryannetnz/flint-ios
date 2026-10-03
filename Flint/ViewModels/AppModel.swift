@@ -68,7 +68,9 @@ final class AppModel: ObservableObject {
         defer { isBusy = false }
 
         autosaveTask?.cancel()
+        autosaveTask = nil
         stopAccessingCurrentVault()
+        clearCurrentNote()
 
         if url.startAccessingSecurityScopedResource() {
             activeSecurityScopedURL = url
@@ -82,7 +84,9 @@ final class AppModel: ObservableObject {
 
             activeVault = Vault(name: url.lastPathComponent, url: url)
             phase = .ready
-            try reloadNotes()
+            if let note = try reloadNotes() {
+                try loadNote(note)
+            }
         } catch {
             phase = .onboarding
             activeVault = nil
@@ -117,9 +121,7 @@ final class AppModel: ObservableObject {
         await saveCurrentNoteIfNeeded()
 
         do {
-            noteText = try fileService.readNote(at: note.url)
-            selectedNote = note
-            hasUnsavedChanges = false
+            try loadNote(note)
         } catch {
             alertMessage = error.localizedDescription
         }
@@ -133,7 +135,7 @@ final class AppModel: ObservableObject {
 
         do {
             let noteURL = try fileService.createNote(named: name, in: vaultURL)
-            try reloadNotes()
+            _ = try reloadNotes()
 
             if let note = notes.first(where: { $0.url == noteURL }) {
                 await openNote(note)
@@ -156,8 +158,10 @@ final class AppModel: ObservableObject {
 
         do {
             try fileService.saveNote(noteText, at: selectedNote.url)
-            try reloadNotes()
             hasUnsavedChanges = false
+            if let note = try reloadNotes() {
+                try loadNote(note)
+            }
         } catch {
             alertMessage = error.localizedDescription
         }
@@ -198,8 +202,9 @@ final class AppModel: ObservableObject {
         alertMessage = nil
     }
 
-    private func reloadNotes() throws {
-        guard let vault = activeVault else { return }
+    // Returns a fallback for the caller to open; refreshing metadata never schedules navigation.
+    private func reloadNotes() throws -> NoteItem? {
+        guard let vault = activeVault else { return nil }
 
         let selectedURL = selectedNote?.url
         notes = try fileService.listMarkdownNotes(in: vault.url)
@@ -207,14 +212,24 @@ final class AppModel: ObservableObject {
         if let selectedURL, let refreshedSelection = notes.first(where: { $0.url == selectedURL }) {
             selectedNote = refreshedSelection
         } else if let firstNote = notes.first {
-            Task {
-                await openNote(firstNote)
-            }
+            return firstNote
         } else {
-            selectedNote = nil
-            noteText = ""
-            hasUnsavedChanges = false
+            clearCurrentNote()
         }
+        return nil
+    }
+
+    private func loadNote(_ note: NoteItem) throws {
+        let text = try fileService.readNote(at: note.url)
+        selectedNote = note
+        noteText = text
+        hasUnsavedChanges = false
+    }
+
+    private func clearCurrentNote() {
+        selectedNote = nil
+        noteText = ""
+        hasUnsavedChanges = false
     }
 
     private func scheduleAutosave() {
