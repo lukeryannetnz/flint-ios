@@ -4,6 +4,8 @@
 
 Define how Flint's automated test suite should run for contributors and CI, including the default simulator lane and the optional device-validation lane.
 
+## Requirements
+
 ### Requirement: Simulator test lane is the default
 
 The system SHALL support running the full Flint automated test suite on an iOS Simulator without requiring developer-specific code signing configuration.
