@@ -20,6 +20,9 @@
 		A1000001000000000000000B /* VaultFileServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000010B /* VaultFileServiceTests.swift */; };
 		A1000001000000000000000C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000010C /* Assets.xcassets */; };
 		A1000001000000000000000D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000010D /* LaunchScreen.storyboard */; };
+		A1000001000000000000000E /* FlintRichTextCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000010E /* FlintRichTextCodec.swift */; };
+		A1000001000000000000000F /* FlintMarkdownImageAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000010F /* FlintMarkdownImageAttachment.swift */; };
+		A10000010000000000000010 /* MarkdownDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000010000000000000110 /* MarkdownDocument.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -53,6 +56,9 @@
 		A10000010000000000000132 /* FlintTests.Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = FlintTests.Debug.xcconfig; sourceTree = "<group>"; };
 		A10000010000000000000133 /* FlintTests.Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = FlintTests.Release.xcconfig; sourceTree = "<group>"; };
 		A10000010000000000000134 /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.xcconfig.example; sourceTree = "<group>"; };
+		A1000001000000000000010E /* FlintRichTextCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlintRichTextCodec.swift; sourceTree = "<group>"; };
+		A1000001000000000000010F /* FlintMarkdownImageAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlintMarkdownImageAttachment.swift; sourceTree = "<group>"; };
+		A10000010000000000000110 /* MarkdownDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownDocument.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -88,6 +94,7 @@
 			children = (
 				A10000010000000000000101 /* FlintApp.swift */,
 				A10000010000000000000102 /* Models.swift */,
+				A10000010000000000000077 /* Documents */,
 				A10000010000000000000074 /* Services */,
 				A10000010000000000000075 /* ViewModels */,
 				A10000010000000000000076 /* Views */,
@@ -161,6 +168,16 @@
 				A1000001000000000000010D /* LaunchScreen.storyboard */,
 			);
 			path = Resources;
+			sourceTree = "<group>";
+		};
+		A10000010000000000000077 /* Documents */ = {
+			isa = PBXGroup;
+			children = (
+				A1000001000000000000010E /* FlintRichTextCodec.swift */,
+				A1000001000000000000010F /* FlintMarkdownImageAttachment.swift */,
+				A10000010000000000000110 /* MarkdownDocument.swift */,
+			);
+			path = Documents;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -265,6 +282,9 @@
 			files = (
 				A10000010000000000000001 /* FlintApp.swift in Sources */,
 				A10000010000000000000002 /* Models.swift in Sources */,
+				A10000010000000000000010 /* MarkdownDocument.swift in Sources */,
+				A1000001000000000000000F /* FlintMarkdownImageAttachment.swift in Sources */,
+				A1000001000000000000000E /* FlintRichTextCodec.swift in Sources */,
 				A10000010000000000000003 /* VaultBookmarkStore.swift in Sources */,
 				A10000010000000000000004 /* VaultFileService.swift in Sources */,
 				A10000010000000000000005 /* AppModel.swift in Sources */,

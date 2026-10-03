@@ -6,6 +6,17 @@ Define how Flint exposes markdown notes within a selected vault, including note 
 
 ## Requirements
 
+### Requirement: Separate note data from document presentation
+
+The implementation SHALL keep vault and note value models independent of UIKit. Rich text conversion and formatting SHALL live in a dedicated module, image attachment rendering SHALL live alongside that module in a separate implementation file, and markdown document normalization and HTML rendering SHALL live in a Foundation-only module.
+
+#### Scenario: Maintain document presentation independently
+
+- WHEN a contributor changes rich text formatting or image attachment layout
+- THEN the change is localized to the rich text implementation rather than the vault and note models
+- AND existing callers and tests retain the same conversion and formatting interfaces
+- AND note ordering, markdown round trips, image captions, and HTML rendering retain their existing behavior
+
 ### Requirement: Discover markdown notes in the active vault
 
 The system SHALL list markdown files found anywhere inside the active vault.
