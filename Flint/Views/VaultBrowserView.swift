@@ -39,9 +39,13 @@ struct VaultBrowserView: View {
         splitView
             .onAppear {
                 selectedNoteURL = model.selectedNote?.url
+                normalizeFolderPathComponents()
             }
             .onChange(of: browserMode) { _, newValue in
                 handleBrowserModeChange(newValue)
+            }
+            .onChange(of: model.notes) { _, _ in
+                normalizeFolderPathComponents()
             }
             .onChange(of: model.selectedNote?.url) { _, newValue in
                 syncSelectedNoteURL(newValue)
@@ -99,6 +103,7 @@ struct VaultBrowserView: View {
                     } label: {
                         Label("New Note", systemImage: "square.and.pencil")
                     }
+                    .accessibilityIdentifier("note.create")
 
                     Button {
                         isShowingOpenPicker = true
@@ -152,9 +157,18 @@ struct VaultBrowserView: View {
     private var createNoteSheet: some View {
         NavigationStack {
             Form {
-                TextField("Note name", text: $noteName)
-                    .textInputAutocapitalization(.words)
-                    .autocorrectionDisabled()
+                Section {
+                    TextField("Note name", text: $noteName)
+                        .accessibilityIdentifier("note.create.name")
+                        .textInputAutocapitalization(.words)
+                        .autocorrectionDisabled()
+                }
+
+                Section("Location") {
+                    Text(createNoteLocationDescription)
+                        .accessibilityIdentifier("note.create.location")
+                        .foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("New Note")
             .toolbar {
@@ -168,11 +182,12 @@ struct VaultBrowserView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Create") {
                         let newName = noteName
+                        let targetFolderPathComponents = createNoteFolderPathComponents
                         noteName = ""
                         isShowingCreateNoteSheet = false
 
                         Task {
-                            await model.createNote(named: newName)
+                            await model.createNote(named: newName, inFolderPath: targetFolderPathComponents)
                         }
                     }
                     .disabled(noteName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -184,7 +199,18 @@ struct VaultBrowserView: View {
     private func handleBrowserModeChange(_ newValue: BrowserMode) {
         if newValue == .recent {
             folderPathComponents = []
+        } else {
+            normalizeFolderPathComponents()
         }
+    }
+
+    private var createNoteFolderPathComponents: [String] {
+        browserMode == .folders ? resolvedFolderPathComponents : []
+    }
+
+    private var createNoteLocationDescription: String {
+        let pathComponents = createNoteFolderPathComponents
+        return pathComponents.isEmpty ? "Vault Root" : pathComponents.joined(separator: "/")
     }
 
     private func syncSelectedNoteURL(_ newValue: URL?) {
@@ -211,8 +237,12 @@ struct VaultBrowserView: View {
         VaultFolder.root(vaultName: model.activeVault?.name ?? "Vault", notes: model.notes)
     }
 
+    private var resolvedFolderPathComponents: [String] {
+        folderTree.resolvedPathComponents(for: folderPathComponents)
+    }
+
     private var currentFolder: VaultFolder? {
-        folderTree.folder(at: folderPathComponents[...])
+        folderTree.folder(at: resolvedFolderPathComponents[...])
     }
 
     @ViewBuilder
@@ -259,6 +289,7 @@ struct VaultBrowserView: View {
                         } label: {
                             FolderDrilldownRow(folder: folder)
                         }
+                        .accessibilityIdentifier("folder.\(folder.path)")
                         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
@@ -307,6 +338,12 @@ struct VaultBrowserView: View {
     private func navigateBackFromFolder() {
         guard !folderPathComponents.isEmpty else { return }
         folderPathComponents.removeLast()
+    }
+
+    private func normalizeFolderPathComponents() {
+        let resolvedPathComponents = folderTree.resolvedPathComponents(for: folderPathComponents)
+        guard resolvedPathComponents != folderPathComponents else { return }
+        folderPathComponents = resolvedPathComponents
     }
 }
 

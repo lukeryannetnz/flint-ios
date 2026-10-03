@@ -9,6 +9,41 @@ final class NoteImageWorkflowTests: XCTestCase {
         app.launchEnvironment = ["FLINT_IMAGE_TEST_RUN": runID, "FLINT_IMAGE_TEST_NOTE": "Existing.md"]
     }
 
+    func testFolderCreationUsesDisplayedDestinationAndRecentReturnsToRoot() throws {
+        app.launchEnvironment["FLINT_FOLDER_TEST"] = "1"
+        app.launch()
+        showBrowser()
+        app.buttons["All Notes"].tap()
+        app.buttons["folder.Projects"].tap()
+        app.buttons["folder.Projects/iOS"].tap()
+        try createNote(named: "Nested Created", destination: "Projects/iOS", expectedPath: "Projects/iOS/Nested Created.md")
+        showBrowser()
+        app.buttons["Recent"].tap()
+        try createNote(named: "Recent Created", destination: "Vault Root", expectedPath: "Recent Created.md")
+    }
+
+    private func showBrowser() {
+        if !app.buttons["note.create"].isHittable {
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+        }
+        XCTAssertTrue(app.buttons["note.create"].waitForExistence(timeout: 5))
+    }
+
+    private func createNote(named name: String, destination: String, expectedPath: String) throws {
+        app.buttons["note.create"].tap()
+        let location = app.staticTexts["note.create.location"]
+        XCTAssertTrue(location.waitForExistence(timeout: 5))
+        XCTAssertEqual(location.label, destination)
+        let field = app.textFields["note.create.name"]
+        field.tap()
+        field.typeText(name)
+        app.buttons["Create"].tap()
+        let predicate = NSPredicate { [weak self] _, _ in
+            (try? self?.snapshot()["notePath"] as? String) == expectedPath
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 10), .completed)
+    }
+
     func testExistingImageLoadsWithVisibleBoundsAndCaption() {
         app.launch()
         let image = app.images["note.image.loaded"].firstMatch
