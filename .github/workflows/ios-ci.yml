@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 concurrency:
   group: ios-ci-${{ github.workflow }}-${{ github.ref }}
@@ -19,6 +20,7 @@ jobs:
   build-and-test:
     name: Build and Test
     runs-on: macos-latest
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
@@ -39,7 +41,7 @@ jobs:
               devices_by_runtime = JSON.parse(STDIN.read).fetch("devices")
               runtime_key = devices_by_runtime.keys
                 .grep(/com\.apple\.CoreSimulator\.SimRuntime\.iOS-/)
-                .max
+                .max_by { |runtime| runtime.split("iOS-").last.split("-").map(&:to_i) }
               abort("No iOS simulator runtime found") unless runtime_key
 
               device = Array(devices_by_runtime[runtime_key]).find do |candidate|
@@ -52,7 +54,7 @@ jobs:
           )"
 
           echo "CI_SIMULATOR_ID=$SIMULATOR_ID" >> "$GITHUB_ENV"
-          xcrun simctl boot "$SIMULATOR_ID" || true
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
 
       - name: Build for testing
         run: |
@@ -74,6 +76,16 @@ jobs:
             -sdk iphonesimulator \
             -destination "id=$CI_SIMULATOR_ID" \
             -derivedDataPath /tmp/flint-ci-derived-data \
+            -resultBundlePath "$RUNNER_TEMP/FlintTests.xcresult" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             test-without-building
+
+      - name: Upload test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: flint-test-results
+          path: ${{ runner.temp }}/FlintTests.xcresult
+          if-no-files-found: ignore
+          retention-days: 14

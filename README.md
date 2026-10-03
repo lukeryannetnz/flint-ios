@@ -43,6 +43,8 @@ The repo uses `Configs/Local.xcconfig` for local-only signing overrides. The exa
 
 ## Testing
 
+GitHub Actions builds Flint and runs the full unit and UI test suite on pushes to `main` and pull requests targeting `main`. You can also start **iOS CI** manually from the Actions tab. CI selects an available iPhone simulator and uploads an Xcode test result bundle as the `flint-test-results` artifact, retained for 14 days.
+
 Run the required automated suite on a simulator by default:
 
 ```bash

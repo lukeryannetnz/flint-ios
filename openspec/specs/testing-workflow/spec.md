@@ -6,6 +6,24 @@ Define how Flint's automated test suite should run for contributors and CI, incl
 
 ## Requirements
 
+### Requirement: GitHub Actions builds and tests pull requests
+
+The repository SHALL provide a GitHub Actions workflow that builds Flint for an iOS Simulator and runs the full shared Flint scheme, including unit and UI tests, on pushes to `main`, pull requests targeting `main`, and manual dispatches.
+
+#### Scenario: CI validates a change
+
+- WHEN the workflow is triggered
+- THEN a macOS runner selects a stable Xcode installation and an available iPhone simulator from the newest installed iOS runtime
+- AND simulator startup completes before building and testing
+- AND the workflow builds for testing and runs tests without rebuilding or requiring signing credentials
+- AND build, simulator startup, and test failures fail the job without automatic test retries
+- AND superseded runs are cancelled and the job has a bounded timeout
+
+#### Scenario: Test results are available for investigation
+
+- WHEN the test step produces an Xcode result bundle, whether tests pass or fail
+- THEN the workflow uploads the result bundle as a downloadable artifact retained for 14 days
+
 ### Requirement: Simulator test lane is the default
 
 The system SHALL support running the full Flint automated test suite on an iOS Simulator without requiring developer-specific code signing configuration.
