@@ -38,3 +38,11 @@ The system SHALL remember each save’s original destination, iOS file permissio
 - AND leaving the note either saves it or keeps a protected local recovery copy separate from debug logs, unless the user explicitly discards it
 - AND refreshing file details does not reload editor text or describe a successful write as failed because a later refresh failed
 - AND switching vaults cannot save the previous note’s text into the new vault
+
+#### Scenario: Recover retained edits after restarting
+- WHEN Flint launches with a protected recovery copy
+- THEN it discovers that copy without requiring the original provider file to be readable, and offers to restore or explicitly discard the edits
+- AND the copy identifies its original vault/note and text version; recovered text is never silently written to a different note or over newer source content
+- AND if the source differs or cannot be checked, the user can compare and choose a destination or keep the copy for later
+- AND a copy is removed only after its contents are confirmed saved to the chosen destination or the user explicitly discards it
+- AND cancelling recovery or a failed save retains the copy for the next attempt

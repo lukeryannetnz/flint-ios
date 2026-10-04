@@ -12,7 +12,7 @@ The goal is to answer: **Can the user recover and give us useful crash informati
 
 1. Use MetricKit, Apple’s app-performance reporting framework, alongside reports collected through Xcode. Neither a saved log nor Apple’s report delivery guarantees an explanation for every unexpected exit.
 2. Check screen responsiveness from separate background work. A check running on the frozen screen-update thread would freeze too; time spent suspended in the background does not count.
-3. Save a small “started reopening this vault” record first, but do not wait indefinitely to save it. If it cannot be saved, offer recovery instead of automatically opening the folder.
+3. Save a small “started reopening this vault” record first, but do not wait indefinitely to save it. If it cannot be saved, offer recovery instead of automatically opening the folder and describe a safety-record failure rather than an interrupted attempt. An explicit retry must save the record first.
 
 ## Risks / Trade-offs
 
