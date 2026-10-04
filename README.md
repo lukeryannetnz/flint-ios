@@ -15,6 +15,10 @@ Strike a spark. Keep every note in a markdown vault you own.
 - Create new markdown notes.
 - Edit notes with autosave.
 
+## Shared language
+
+Start with the [glossary](GLOSSARY.md) for common terms and the [domain model](docs/domain-model.md) for how notes, files, images, and recovery relate.
+
 ## Architecture
 
 - `Flint/Models.swift`: Foundation-only vault and note values, folder organization, and list preview helpers.
