@@ -9,7 +9,7 @@ Status: proposed behavior, not yet implemented. The task list records the work a
 ## ADDED Requirements
 
 ### Requirement: Record what the app is doing and how long it takes
-The system SHALL save debug-log entries in development and release builds before it tries to reopen a vault. Each entry SHALL include the log format version, date/time, elapsed time measured independently of the wall clock, severity, step, result, app version/build, launch ID, action ID and related parent-action ID where needed.
+The system SHALL initialize debug logging in development and release builds before it tries to reopen a vault, and record entries throughout each action through its final result. Each entry SHALL include the log format version, date/time, elapsed time measured independently of the wall clock, severity, step, result, app version/build, launch ID, action ID and related parent-action ID where needed.
 
 #### Scenario: Follow a file-loading or saving action
 - WHEN Flint opens or edits a vault stored through the Files app
