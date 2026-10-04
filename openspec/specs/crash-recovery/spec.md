@@ -29,10 +29,17 @@ The system SHALL collect available platform reports for crashes, freezes, excess
 The system SHALL save a record before automatically reopening a vault, then record completion or a handled cancellation/failure. If that record is unfinished, it SHALL show Retry, Choose another vault and Export diagnostics before accessing the folder again. Recovery SHALL preserve the saved folder reference and the user’s files.
 
 #### Scenario: Reopening the vault was interrupted
-- WHEN the previous attempt has no finish record, or a new start record cannot be safely saved
+- WHEN the previous attempt has no finish record
 - THEN Flint shows recovery before automatically reopening the vault and describes the interrupted attempt without asserting a crash cause
 - AND the user can choose another vault or export logs without reading the problem folder
 - AND the user can explicitly retry, subject to the limits on background file work
+
+#### Scenario: A new launch record cannot be saved
+- WHEN Flint cannot safely save a start record before reopening the vault
+- THEN it offers recovery without automatically accessing the folder
+- AND it explains that it could not save the safety record, without claiming an earlier interruption or crash
+- AND choosing another vault and exporting logs remain available
+- AND explicit retry must save a safety record before provider access begins
 
 ### Requirement: Let the user choose whether to share debug information
 The system SHALL offer a versioned debug-information export from setup, recovery and the normal app screen. The user SHALL preview the kinds of information and time range, share through the system share sheet, and be able to clear saved history. No telemetry SHALL be uploaded automatically.
