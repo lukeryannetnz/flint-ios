@@ -90,7 +90,6 @@ final class NoteImageWorkflowTests: XCTestCase {
         app.buttons["note.insert-image"].tap()
         app.buttons["Files"].tap()
         XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 10))
-        app.alerts.buttons["OK"].tap()
         let failed = try snapshot()
         XCTAssertEqual(failed["saved"] as? String, "Before\nAfter")
         XCTAssertEqual(failed["unsaved"] as? Bool, true)
@@ -100,7 +99,9 @@ final class NoteImageWorkflowTests: XCTestCase {
         XCTAssertEqual(assets.count, 1)
         XCTAssertEqual(assets.first?["managed"] as? Bool, true)
         XCTAssertEqual(assets.first?["readable"] as? Bool, true)
-        app.buttons["test.retry-save"].tap()
+        let retry = app.alerts.buttons["Retry save"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        retry.tap()
         waitForSavedImage()
         XCTAssertEqual((try snapshot())["saved"] as? String, draft)
         app.terminate()

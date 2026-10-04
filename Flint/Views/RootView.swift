@@ -28,14 +28,6 @@ struct RootView: View {
                         }
                     }
                     .accessibilityIdentifier("test.remove-source")
-                    if ProcessInfo.processInfo.environment["FLINT_IMAGE_TEST_FAIL_SAVE"] == "1" {
-                        Button("Retry save") {
-                            ImageWorkflowSaveFailure.removed = true
-                            model.clearAlert()
-                            Task { await model.saveCurrentNoteIfNeeded() }
-                        }
-                        .accessibilityIdentifier("test.retry-save")
-                    }
                 }
             }
             #endif
@@ -54,6 +46,15 @@ struct RootView: View {
                 }
             )
         ) {
+            #if DEBUG
+            if ImageWorkflowSaveFailure.enabled {
+                Button("Retry save") {
+                    ImageWorkflowSaveFailure.removed = true
+                    model.clearAlert()
+                    Task { await model.saveCurrentNoteIfNeeded() }
+                }
+            }
+            #endif
             Button("OK", role: .cancel) {}
         } message: {
             Text(model.alertMessage ?? "")
