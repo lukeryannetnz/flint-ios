@@ -30,4 +30,6 @@ The system SHALL automatically choose a note when notes exist and the current se
 #### Scenario: No notes in vault
 - GIVEN Flint has reloaded the active vault’s note list
 - WHEN no markdown notes exist
-- THEN no note is selected, editor text is cleared and unsaved state is cleared
+- THEN Flint preserves any unsaved text until it is confirmed saved, kept in a protected recovery copy, or explicitly discarded
+- AND a missing source file does not cause silent recreation or loss of the draft
+- AND only after that decision may Flint clear the selection, editor text and unsaved state

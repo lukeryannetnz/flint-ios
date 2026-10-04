@@ -4,6 +4,8 @@
 
 Define how Flint exposes markdown notes within a selected vault, including note discovery, note creation, rich text editing, markdown persistence, and autosave behavior.
 
+Status: proposed revisions in this specification are not yet implemented; the associated change tasks track implementation and validation.
+
 ## Requirements
 
 ### Requirement: Separate note data from document presentation
@@ -52,46 +54,38 @@ The system SHALL present a compact markdown-aware preview for each listed note s
 - AND Flint truncates the preview to fit the list row without spilling into a full document rendering
 
 ### Requirement: Auto-select an available note
-
-The system SHALL select a note automatically when notes exist and no current selection can be preserved.
-
-Note-list refresh SHALL update metadata without launching background navigation tasks. The operation that opens a vault, creates a note, or saves edits SHALL complete any required selection and content loading before returning.
+The system SHALL automatically choose a note when notes exist and the current selection cannot be kept. Refreshing file details SHALL not start unexpected note changes. Opening a vault SHALL establish a selected or loading-note state when it first shows file details; content reads SHALL be explicit, cancellable and tied to that selection. Creating a note SHALL open only the created note, and saving SHALL not trigger background fallback navigation.
 
 #### Scenario: Open another vault
-
-- GIVEN a note from a previous vault is selected
+- GIVEN a note from the old vault is selected
 - WHEN Flint opens another vault
-- THEN Flint clears the previous editor state before loading the new vault
-- AND the first available note and its content are selected before vault opening returns
-- AND previous editor text is never saved into the new vault
+- THEN it saves previous unsaved edits or obtains an explicit keep/discard choice before replacing editor state
+- AND it selects the first available note or shows that its content is loading when file details appear
+- AND unavailable content does not block the browser and old editor text is never saved into the new vault
 
 #### Scenario: Create a note without delayed selection changes
-
-- WHEN Flint creates a note in a vault with existing notes
+- WHEN Flint creates a note in a vault containing other notes
 - THEN the created note is selected before creation returns
-- AND refreshing the list does not schedule another note to open later
+- AND refreshing the list does not schedule another note to open afterward
 
 #### Scenario: Refresh metadata after saving
-
-- GIVEN the selected note remains in the vault
-- WHEN Flint saves edits and refreshes the note list
-- THEN Flint updates the selected note metadata without re-reading its content
+- GIVEN the saved note still exists
+- WHEN Flint saves edits and refreshes its file details
+- THEN it updates those details without rereading editor content
 - AND the editor retains the saved text
 
 #### Scenario: First note after reload
-
-- GIVEN Flint has reloaded notes for the active vault
-- AND no existing selected note can be matched in the refreshed list
-- WHEN at least one note exists
-- THEN Flint opens the first note in the sorted note list
+- GIVEN Flint has refreshed the active vault’s note list and cannot keep the previous selection
+- WHEN the list contains a note
+- THEN Flint explicitly starts loading the first note in the current sorted list
+- AND a later user selection makes that earlier loading request obsolete
 
 #### Scenario: No notes in vault
-
-- GIVEN Flint has reloaded notes for the active vault
+- GIVEN Flint has reloaded the active vault’s note list
 - WHEN no markdown notes exist
-- THEN no note is selected
-- AND editor text is cleared
-- AND unsaved state is cleared
+- THEN Flint preserves any unsaved text until it is confirmed saved, kept in a protected recovery copy, or explicitly discarded
+- AND a missing source file does not cause silent recreation or loss of the draft
+- AND only after that decision may Flint clear the selection, editor text and unsaved state
 
 ### Requirement: Create markdown notes
 

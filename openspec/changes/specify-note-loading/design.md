@@ -12,7 +12,7 @@ The goal is to answer: **Can the user reach the notes they need sooner without a
 
 1. Separate finding files, reading preview text and opening the chosen note. Reading every preview during listing can trigger unnecessary Dropbox downloads.
 2. Let user-requested work run between listing batches. Give each request an ID so a delayed result can be ignored after the user chooses another note.
-3. Save a snapshot containing text version and original destination, in order. Store recovery copies of edits separately from debug logs so log export can never expose them.
+3. Save a snapshot containing text version and original destination, in order. Store recovery copies of edits separately from debug logs so log export can never expose them. Discover those copies at launch, offer restore/discard without requiring provider access, reconcile changed sources explicitly, and remove a copy only after a confirmed save or explicit discard.
 
 ## Risks / Trade-offs
 
