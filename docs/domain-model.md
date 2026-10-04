@@ -41,16 +41,3 @@ A debug log records what Flint was doing and what failed. A crash report supplie
 An interrupted opening is not proof of a crash: the user may have closed the app or iOS may have stopped it. Recovery needs to account for that uncertainty. A freeze, where Flint remains open but stops responding, is also different from a crash.
 
 A recovery copy preserves unsaved text separately from the original note. It must not be confused with a debug log or permission to overwrite the original file.
-
-## Current behavior and proposed improvements
-
-The existing code represents vaults, note locations, previews, image references, and imported image assets. The editor tracks unsaved changes and saves notes. These concepts can be checked in [Models.swift](../Flint/Models.swift), [AppModel.swift](../Flint/ViewModels/AppModel.swift), and [VaultFileService.swift](../Flint/Services/VaultFileService.swift).
-
-The following are proposed improvements, not claims about functionality already implemented:
-
-- [Debug logs](https://github.com/lukeryannetnz/flint-ios/pull/15) and [crash information and recovery](https://github.com/lukeryannetnz/flint-ios/pull/16).
-- [Responsive file access](https://github.com/lukeryannetnz/flint-ios/pull/17), [gradual note loading and safe saves](https://github.com/lukeryannetnz/flint-ios/pull/18), and [background image loading](https://github.com/lukeryannetnz/flint-ios/pull/19).
-
-Those specifications define the actual limits and acceptance criteria. For example, if version A finishes saving after the user has typed version B, confirming A must not mark B as saved. The glossary provides the names for these concepts; it does not replace their specifications.
-
-Use this language in new specifications and PR descriptions. Existing paths or code identifiers such as `diagnostic-journal` can remain stable while reader-facing prose says **debug log**.

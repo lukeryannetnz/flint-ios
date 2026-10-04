@@ -31,7 +31,7 @@ Installing repository-local skills SHALL preserve existing specifications, chang
 
 The repository SHALL define Flint's common terms in root `GLOSSARY.md` and explain their relationships in `docs/domain-model.md`. Reader-facing specifications and review descriptions SHALL use these terms consistently and explain unfamiliar technical terms where they are needed. Existing machine identifiers MAY remain unchanged.
 
-The glossary SHALL contain vocabulary rather than implementation contracts. The domain model SHALL distinguish current behavior from proposed behavior.
+The glossary SHALL contain vocabulary rather than implementation contracts. The domain model SHALL define concepts and their relationships without listing implementation status or work in progress. Implementation plans and status SHALL remain in the relevant change documents.
 
 #### Scenario: Contributor describes logging and file availability
 
