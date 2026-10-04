@@ -19,7 +19,11 @@ The system SHALL read images and prepare smaller display copies in background wo
 - AND supported formats, aspect ratio/sizing, zoom/pan, vault-contained paths and portable references remain supported without rewriting source assets
 
 ### Requirement: Limit image preparation and memory use
-The system SHALL create a smaller image directly from the source instead of first decoding the entire full-resolution image. At most one image SHALL be decoded at a time. Images in notes SHALL be at most 2048 pixels on their longest side, viewer images at most 4096, and reusable display-image cache memory at most 32 MiB.
+The system SHALL create a smaller image directly from the source instead of first decoding the entire full-resolution image. At most one image SHALL be decoded at a time. Cache keys SHALL include the vault and resource identity, observed file version and requested display size; matching versions/sizes from different files SHALL not share an entry. Images in notes SHALL be at most 2048 pixels on their longest side, viewer images at most 4096, and reusable display-image cache memory at most 32 MiB.
+
+#### Scenario: Different images have the same version
+- WHEN two files have the same observed version and requested size
+- THEN each displays its own image, with no cache collision between files or vaults
 
 #### Scenario: A large image loads or iOS reports low memory
 - WHEN image requests need the same file/version/display size
@@ -38,6 +42,15 @@ The system SHALL copy/encode Files, photo-library and camera images into note-ma
 - AND cleanup of an imported-but-unused asset does not delete anything referenced by saved or unsaved text
 - AND if saving the note fails, the inserted reference and asset remain available for retry
 - AND successfully saved images still load after the original import source is removed and Flint restarts
+
+### Requirement: Bound temporary memory during imports
+At most one image import SHALL prepare or encode pixels at a time. Photo/camera imports SHALL prepare an image no larger than 4096 pixels on its longest side before encoding, release the picker’s original full-resolution image as soon as preparation allows, and encode to a file rather than holding a second full encoded image buffer in memory. File imports SHALL stream the copy without fully decoding the original, preserving its bytes. Files that cannot be safely prepared SHALL fail recoverably without altering note text.
+
+#### Scenario: Large photo or camera input is imported
+- WHEN a large source image is selected or captured
+- THEN only one import prepares or encodes pixels, the prepared image is at most 4096 pixels on its longest side, and optional display decoding waits while import preparation occupies the image-processing slot
+- AND iPhone measurements record peak temporary memory, including the picker input, and verify that imports do not accumulate full-resolution inputs or full encoded buffers
+- AND source picker memory is reported separately rather than claimed to fit within the display-cache limit
 
 ### Requirement: Test loading and imports on an iPhone
 The implementation SHALL include repeatable tests for delayed, unreadable and large images, memory limits/warnings, closed viewers and failed imports. It SHALL record real-iPhone Files/photo/camera and Dropbox checks before being declared validated.

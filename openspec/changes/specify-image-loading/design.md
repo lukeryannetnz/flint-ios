@@ -11,8 +11,8 @@ The goal is to answer: **Can large or unavailable images load and import without
 ## Decisions
 
 1. Use Image I/O, Apple’s image-reading framework, to make smaller display images directly from source files. Views receive prepared images rather than opening files themselves.
-2. Keep reusable images by file version and requested size, and give note/viewer/import requests identities so old results can be ignored. The 32 MiB cache limit is not a limit on total process memory.
-3. Move temporary picker copies and camera encoding into background work. Keep source/destination permissions and finish importing the asset before adding its markdown reference.
+2. Keep reusable images by vault/resource identity, file version and requested size, and give note/viewer/import requests identities so old results can be ignored. The 32 MiB cache limit is not a limit on total process memory.
+3. Move temporary picker copies and camera encoding into background work. Prepare/encode one import at a time, using the same image-processing slot as display decoding; limit photo/camera preparations to 4096 pixels, encode to files, and stream Files copies without decoding or changing their source bytes. Release picker inputs promptly and measure their temporary memory separately. Keep source/destination permissions and finish importing the asset before adding its markdown reference.
 
 ## Risks / Trade-offs
 
