@@ -1,36 +1,4 @@
-# app-bootstrap Specification
-
-## Purpose
-
-Define how Flint launches, restores a previously selected vault, and decides whether to show onboarding or the main note browser.
-
-Status: proposed revisions in this specification are not yet implemented; the associated change tasks track implementation and validation.
-
-## Requirements
-
-### Requirement: Initial launch state
-
-The system SHALL begin in a loading state while vault restoration is attempted.
-
-#### Scenario: Bootstrap starts
-
-- GIVEN the app has just launched
-- WHEN the root view appears
-- THEN the app model starts bootstrap once
-- AND the interface shows a full-screen loading state until bootstrap decides the next phase
-- AND the loading presentation covers the entire display without exposing default system background chrome
-- AND the loading presentation uses Flint branding rather than a bare progress indicator
-
-### Requirement: Onboarding without a stored vault
-
-The system SHALL show onboarding when no vault bookmark has been stored.
-
-#### Scenario: No stored bookmark
-
-- GIVEN no persisted vault bookmark exists
-- WHEN bootstrap runs
-- THEN the app transitions to onboarding
-- AND no active vault is selected
+## MODIFIED Requirements
 
 ### Requirement: Restore previously selected vault
 The system SHALL try to reopen the previously selected vault using its saved folder reference, except when an interrupted previous attempt requires recovery first. The saved reference is the bookmark data iOS uses to find that folder again.
@@ -59,17 +27,6 @@ The system SHALL clear a saved folder reference only when checking it proves it 
 - WHEN checking the reference times out or fails because the provider is temporarily unavailable
 - THEN Flint offers recovery and logs the error category
 - AND it does not clear the saved vault reference
-
-### Requirement: Single active security-scoped vault
-
-The system SHALL release security-scoped access for the previous vault before switching to another vault.
-
-#### Scenario: Open a different vault
-
-- GIVEN a vault is currently open
-- WHEN the user opens another vault
-- THEN any pending autosave task is cancelled
-- AND security-scoped access to the previous vault is stopped before the new vault becomes active
 
 ### Requirement: Surface user-facing failures
 The system SHALL show ordinary errors in dismissible alerts and loading errors on a recovery screen with Retry, Choose another vault and Export diagnostics.
