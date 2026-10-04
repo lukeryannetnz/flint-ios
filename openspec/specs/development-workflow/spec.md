@@ -38,4 +38,5 @@ The glossary SHALL contain vocabulary rather than implementation contracts. The 
 - WHEN a contributor writes a specification or review description
 - THEN they use “debug log” for Flint's record of actions and errors
 - AND they distinguish a listed file from a file whose contents can be read
+- AND they use recovery for interrupted editing as well as failures while opening a vault or note
 - AND they can refer to the glossary and domain model for the shared meaning

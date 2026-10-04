@@ -46,7 +46,7 @@ _Avoid_: Diagnostic journal, diagnostic ledger.
 
 **Crash report**: A report containing evidence about an unexpected termination of Flint.
 
-**Recovery**: The process of returning to a usable app after opening a vault or note fails or is interrupted.
+**Recovery**: The process of returning to a usable app and recovering retained edits after vault opening, note loading, or an editing session fails or is interrupted.
 
 **Recovery copy**: A separate copy of unsaved note text kept so the user can recover their edits.
 _Avoid_: Backup when referring specifically to unsaved edits.
