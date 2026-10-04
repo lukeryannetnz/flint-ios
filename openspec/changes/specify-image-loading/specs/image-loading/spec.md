@@ -1,47 +1,49 @@
-# image-loading Specification
+# Load and import images without freezing the screen
 
 ## Purpose
 
-Define asynchronous bounded image rendering, viewer loading and source import for partially downloaded provider-backed assets.
+Describe how images load and import in background work, using smaller display images so large or partly downloaded files do not freeze the app or exhaust memory.
 
-Status: planned; the associated change's unchecked tasks identify implementation and validation still required.
+Status: proposed behavior, not yet implemented. The task list records the work and testing still needed.
 
 ## ADDED Requirements
 
-### Requirement: Render prepared images without synchronous source reads
-The system SHALL asynchronously load and downsample image files with stable pending placeholders. Initial text construction, layout, viewer bodies and view creation/update SHALL perform no source-file read or decode. Successful results SHALL apply only to the current document/viewer generation.
+### Requirement: Show text while images load in the background
+The system SHALL read images and prepare smaller display copies in background work, showing stable placeholders meanwhile. Building formatted text, laying out the note, and creating/updating viewer screens SHALL not read or decode image files. Completed results SHALL apply only if they still belong to the current note or viewer request.
 
-#### Scenario: Pending image or dismissed viewer
-- WHEN an image is unavailable, delayed, invalid or still decoding
-- THEN text stays readable/scrollable, captions and stored markdown remain unchanged, and failed images expose retry
-- AND the fullscreen viewer shows progress and permits immediate dismissal
-- AND late results cannot reopen a dismissed viewer or alter another note
-- AND supported formats, sizing/aspect ratio, zoom/pan, path containment and portable references remain supported without source migration
+#### Scenario: An image is waiting or the viewer has been closed
+- WHEN an image is unavailable, delayed, invalid or still being prepared for display
+- THEN text stays readable/scrollable, captions and markdown stay unchanged, and failed images can be retried
+- AND the fullscreen viewer shows progress and can be closed immediately
+- AND an old result cannot reopen a closed viewer or change another note
+- AND supported formats, aspect ratio/sizing, zoom/pan, vault-contained paths and portable references remain supported without rewriting source assets
 
-### Requirement: Bound image decode and cache memory
-The system SHALL downsample from the source rather than first decoding full resolution, allow at most one active decode, cap inline images at 2048 pixels and viewer images at 4096 on the longest edge, and limit reusable decoded cache memory to 32 MiB.
+### Requirement: Limit image preparation and memory use
+The system SHALL create a smaller image directly from the source instead of first decoding the entire full-resolution image. At most one image SHALL be decoded at a time. Images in notes SHALL be at most 2048 pixels on their longest side, viewer images at most 4096, and reusable display-image cache memory at most 32 MiB.
 
-#### Scenario: Large image or memory pressure
-- WHEN a large source is loaded or a memory warning occurs
-- THEN version/target-size cache keys avoid ordinary relayout rereads and duplicate requests are coalesced
-- AND reusable images are evicted and optional queued work cancelled under memory pressure
-- AND active viewer/transient memory is measured separately from the cache budget on an iPhone
-- AND accessibility evidence reflects actual successful prepared-image load and visible bounds, without rereading the source
+#### Scenario: A large image loads or iOS reports low memory
+- WHEN image requests need the same file/version/display size
+- THEN they share work or reuse the saved display copy rather than repeatedly reading it during ordinary layout changes
+- AND memory warnings remove reusable copies and cancel optional waiting work
+- AND temporary memory and the currently displayed viewer image are measured separately from the reusable-cache limit on an iPhone
+- AND accessibility/UI tests confirm the actual prepared image and visible bounds without rereading the source
 
-### Requirement: Import sources safely in background work
-The system SHALL copy/encode Files/photo/camera sources into managed assets outside the main actor while retaining source/destination access for actual worker duration. It SHALL insert a portable relative reference only after successful import for the current document generation.
+### Requirement: Import images in the background without losing text or assets
+The system SHALL copy/encode Files, photo-library and camera images into note-managed storage away from screen updates, keeping source/destination permission until work finishes. It SHALL insert a portable relative file reference only after successful import, and only into the note request that started it.
 
-#### Scenario: Import fails, is cancelled, or finishes after navigation
-- WHEN a source read, copy or encode cannot complete for the original note
-- THEN editor text and insertion intent remain intact and the failed stage is recorded
-- AND late import cannot insert into another note
-- AND any unreferenced completed asset is handled without deleting assets referenced by saved or unsaved text
-- AND save failure retains the imported reference/asset for retry; source removal and relaunch still render successfully saved assets
+#### Scenario: Import fails, is cancelled or finishes after changing notes
+- WHEN a source read, copy or encode cannot finish for the original note
+- THEN editor text and intended insertion position remain intact and the failed step is logged
+- AND a delayed import cannot insert into another note
+- AND cleanup of an imported-but-unused asset does not delete anything referenced by saved or unsaved text
+- AND if saving the note fails, the inserted reference and asset remain available for retry
+- AND successfully saved images still load after the original import source is removed and Flint restarts
 
-### Requirement: Validate image workflows on a device
-The implementation SHALL include deterministic delayed/decode-failed/large-image, cache/memory, stale-viewer and import fault coverage and record physical-device Files/photo/camera and Dropbox acceptance before being declared validated.
+### Requirement: Test loading and imports on an iPhone
+The implementation SHALL include repeatable tests for delayed, unreadable and large images, memory limits/warnings, closed viewers and failed imports. It SHALL record real-iPhone Files/photo/camera and Dropbox checks before being declared validated.
 
-#### Scenario: Device image acceptance
-- WHEN insertion, scrolling, viewer loading/dismissal, cancellation, permission denial and save/reopen run on an iPhone
-- THEN decoding and staging are absent from the main-thread trace, memory stays bounded, and original text/markdown/assets remain intact
-- AND commit, device/iOS/provider/source details and evidence are recorded; absent required device evidence leaves validation pending
+#### Scenario: Check the complete image workflow on a device
+- WHEN insertion, scrolling, viewer opening/closing, cancellation, denied permission and save/reopen are exercised on an iPhone
+- THEN image decoding and temporary-source copying are absent from the screen-update thread, memory use follows the limits and text/markdown/assets remain intact
+- AND the tested code version, device/iOS/Dropbox/source details and evidence are recorded
+- AND required device checks remain pending when that evidence is unavailable

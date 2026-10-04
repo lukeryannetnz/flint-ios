@@ -1,19 +1,19 @@
-# Design
+# Design: Load and import images without freezing the screen
 
 ## Context
 
-This is spec PR 5/5 replacing the preserved PR #14. Attachment layout and viewer creation/update synchronously read full-resolution files. Specify lazy loading and bounded decoding while preserving captions, portable markdown and imported assets.
+Flint currently reads some image files while laying out notes and opening or updating the fullscreen viewer. Large images can also consume far more memory than their on-screen size needs. Reading and preparing them should happen in the background with clear limits.
 
 ## Goals / Non-Goals
 
-Goal: resolve **How do large or pending images render and import without freezing or exhausting memory?**. This PR defines behavior; implementation and device validation remain tracked work. Other layers have their own PRs.
+The goal is to answer: **Can large or unavailable images load and import without freezing the screen, losing text or using unbounded memory?** This part defines the proposed behavior and its tests. Other PRs cover the remaining parts of the plan; the app has not been changed by these specs.
 
 ## Decisions
 
-1. Use Image I/O downsampling and a shared bounded image module; views receive prepared images instead of opening sources.
-2. Cache by resource version and target size, and apply generation checking to attachments, viewers and imports.
-3. Background picker staging/encoding retains access leases and managed-asset-before-reference ordering.
+1. Use Image I/O, Apple’s image-reading framework, to make smaller display images directly from source files. Views receive prepared images rather than opening files themselves.
+2. Keep reusable images by file version and requested size, and give note/viewer/import requests identities so old results can be ignored. The 32 MiB cache limit is not a limit on total process memory.
+3. Move temporary picker copies and camera encoding into background work. Keep source/destination permissions and finish importing the asset before adding its markdown reference.
 
 ## Risks / Trade-offs
 
-Numeric budgets are initial acceptance limits, not measured performance. Platform/provider observations may be absent; tests and physical-device evidence must state uncertainty. The existing vault/markdown format is preserved.
+The limits are proposed acceptance criteria, not measurements of the current app. Some iOS or Dropbox information may be unavailable; logs and test records must state what is missing. Notes and images retain their current file formats.
