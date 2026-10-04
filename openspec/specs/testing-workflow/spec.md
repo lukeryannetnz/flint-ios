@@ -104,6 +104,8 @@ The system SHALL include deterministic automated coverage for user-facing note i
 - **WHEN** a deterministic test failure prevents saving the note
 - **THEN** Flint reports the save error and retains the unsaved edit and referenced managed asset for retry
 - **AND** after the failure is removed, retrying the save persists the relative reference and its referenced managed asset
+- **AND** the debug-only failure fixture provides an explicit retry action in the save-error alert so keyboard focus and repeated save alerts cannot intercept a tap on an underlying control
+- **AND** the test verifies the retained draft and managed asset before invoking that alert action and verifies persistence after relaunch
 
 #### Scenario: Default simulator lane runs image workflow coverage
 - **GIVEN** a contributor runs the required simulator test command
