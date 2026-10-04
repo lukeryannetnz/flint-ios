@@ -46,4 +46,3 @@ The system SHALL remember each save’s original destination, iOS file permissio
 - AND if the source differs or cannot be checked, the user can compare and choose a destination or keep the copy for later
 - AND a copy is removed only after its contents are confirmed saved to the chosen destination or the user explicitly discards it
 - AND cancelling recovery or a failed save retains the copy for the next attempt
-
