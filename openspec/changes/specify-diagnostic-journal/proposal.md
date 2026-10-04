@@ -1,19 +1,22 @@
-# Proposal
+# Proposal: Debug logs that help explain failures
 
 ## Why
 
-Alerts do not show which Dropbox operation stalled, and evidence disappears after termination. Define content-free correlated events and bounded local storage before adding collection or recovery behavior.
+Flint can freeze while opening a Dropbox folder, but its error alert does not tell us which step got stuck. A saved debug log will show the sequence of actions and how long each took, even after the app restarts.
 
 ## What Changes
 
-- Define the behavior in `diagnostic-journal` and its acceptance scenarios.
-- Preserve this part of the original proposal while making it reviewable independently.
+- Record the steps involved in opening, reading and saving notes and images.
+- Keep related log entries together using identifiers for the app launch and the action being performed.
+- Save the log on the iPhone with strict size, age and privacy limits.
+
+For example: A useful log should show that opening a folder reached “waiting for Dropbox to allow a read,” then stopped there. It should not contain the folder name, note text or account details.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `diagnostic-journal`: Define safe, correlated local diagnostic events and bounded storage for investigating provider-backed vault failures.
+- `diagnostic-journal`: Describe the debug log Flint will save on the iPhone so developers can see what the app was doing before a file-loading failure.
 
 ### Modified Capabilities
 
@@ -21,6 +24,6 @@ None.
 
 ## Impact
 
-Planning only; no app code or runtime configuration changes. None; first PR in the replacement stack.
-Original reference: https://github.com/lukeryannetnz/flint-ios/pull/14 (preserved, superseded).
-Review question: **What evidence is useful, safe to retain, and cheap enough to collect?**
+This is the first review in the five-part plan. This PR contains proposed behavior and test requirements; it does not change the app yet. Implementation and real-iPhone testing remain separate tasks.
+
+The [original combined plan](https://github.com/lukeryannetnz/flint-ios/pull/14) remains available for reference. The folder names are kept stable for OpenSpec; the document headings use plain English.
