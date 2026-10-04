@@ -6,6 +6,16 @@ Define repository-local OpenSpec workflow support and shared language for Flint 
 
 ## Requirements
 
+### Requirement: README overview
+
+The root README SHALL summarize Flint's scope and link to `openspec/specs/` as the source of truth for current behavior, without duplicating feature or specification lists. It SHALL link to `openspec/changes/` for proposed changes. Its architecture overview SHALL use a simplified Mermaid diagram and plain-language description of the main responsibilities rather than a file-by-file inventory.
+
+#### Scenario: Reader explores the project
+
+- WHEN a reader opens the root README
+- THEN they can understand Flint's purpose and the relationship between the interface, app state, document conversion, and vault storage
+- AND they can follow links to current specifications and proposed changes for details
+
 ### Requirement: Official repository-local skills
 
 The repository SHALL provide the official Fission-AI/OpenSpec workflow skills under `.agents/skills/`, allowing Codex to discover them for this project.
