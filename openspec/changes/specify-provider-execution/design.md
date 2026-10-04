@@ -1,19 +1,19 @@
-# Design
+# Design: Background file loading that keeps the app responsive
 
 ## Context
 
-This is spec PR 3/5 replacing the preserved PR #14. Main-actor synchronous coordination and enumeration can freeze the loading screen. Define background work, logical cancellation and resource lifetimes before migrating note and image callers.
+Flint currently performs some file work on the same thread that updates the screen. If Dropbox pauses while supplying a file, loading indicators and taps can stop working too. File loading needs its own limited background capacity and a clear way back to a usable screen.
 
 ## Goals / Non-Goals
 
-Goal: resolve **How do we keep the UI responsive when file coordination cannot be stopped?**. This PR defines behavior; implementation and device validation remain tracked work. Other layers have their own PRs.
+The goal is to answer: **Does this keep the screen usable when Dropbox is slow, including when an already-started read cannot be stopped immediately?** This part defines the proposed behavior and its tests. Other PRs cover the remaining parts of the plan; the app has not been changed by these specs.
 
 ## Decisions
 
-1. Use a dedicated bounded blocking executor, not unlimited detached tasks or blocking calls inside a cooperative actor.
-2. Logical cancellation invalidates UI publication separately from worker completion; NSFileCoordinator.cancel cannot interrupt an already-running accessor.
-3. Workers own security-scope leases until actual completion. A second global slot supports switching away from one blocked vault.
+1. Use a limited pool of background file workers. An unlimited new task for each file can accumulate stuck reads and exhaust resources; merely putting blocking work inside a Swift actor does not move it off the shared execution pool.
+2. Treat “stop waiting on screen” separately from “the file operation has stopped.” Apple’s NSFileCoordinator manages shared file access; cancelling it cannot interrupt a read/write block that is already running.
+3. Keep the iOS permission with the actual background operation until it finishes. A second worker slot lets the user try another vault while one folder is stuck.
 
 ## Risks / Trade-offs
 
-Numeric budgets are initial acceptance limits, not measured performance. Platform/provider observations may be absent; tests and physical-device evidence must state uncertainty. The existing vault/markdown format is preserved.
+The limits are proposed acceptance criteria, not measurements of the current app. Some iOS or Dropbox information may be unavailable; logs and test records must state what is missing. Notes and images retain their current file formats.

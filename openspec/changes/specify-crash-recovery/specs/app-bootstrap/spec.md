@@ -1,51 +1,39 @@
 ## MODIFIED Requirements
 
 ### Requirement: Restore previously selected vault
-
-The system SHALL attempt to reopen the previously selected vault from persisted bookmark data unless an unfinished previous restoration requires recovery first.
+The system SHALL try to reopen the previously selected vault using its saved folder reference, except when an interrupted previous attempt requires recovery first. The saved reference is the bookmark data iOS uses to find that folder again.
 
 #### Scenario: Stored bookmark resolves successfully
-
-- GIVEN a persisted vault bookmark exists
-- WHEN bootstrap resolves that bookmark
-- THEN the app opens the resolved vault asynchronously and publishes usable discovery results
-- AND the app transitions to the ready state
-- AND the vault selection remains persisted
+- GIVEN a vault reference has been saved
+- WHEN startup finds that folder using the saved reference
+- THEN Flint opens it in background work and shows the notes found so far
+- AND the app reaches its ready state and keeps the saved vault choice
 
 #### Scenario: Previous restoration was interrupted
-
-- GIVEN the previous restoration marker has no completion or handled-abandonment record
+- GIVEN the last attempt has no completion or handled cancellation/failure record
 - WHEN Flint launches
-- THEN recovery is shown before provider access
-- AND the saved bookmark remains available for explicit retry
+- THEN recovery appears before trying to read the folder
+- AND the saved folder reference remains available for explicit retry
 
 ### Requirement: Recover from stale or invalid bookmark data
-
-The system SHALL discard a stored bookmark only when resolution proves it invalid or unusable; temporary provider unavailability, cancellation, or timeout SHALL preserve it for retry.
+The system SHALL clear a saved folder reference only when checking it proves it invalid or unusable. Temporary file-provider unavailability, cancellation or timeout SHALL keep the reference for retry.
 
 #### Scenario: Stored bookmark cannot be resolved
-
-- GIVEN a persisted vault bookmark exists
-- WHEN bookmark resolution establishes that the bookmark is invalid or unusable
-- THEN the stored bookmark is cleared
-- AND the app transitions to onboarding
-- AND the app shows an alert explaining that the previous vault must be selected again
+- GIVEN a vault reference has been saved
+- WHEN checking it establishes that the reference is invalid or unusable
+- THEN Flint clears it, returns to setup and explains that the vault must be chosen again
 
 #### Scenario: Bookmark resolution times out
-
-- WHEN resolution times out or fails because the provider is temporarily unavailable
-- THEN Flint presents recovery and records the error category
-- AND it does not clear the saved bookmark
+- WHEN checking the reference times out or fails because the provider is temporarily unavailable
+- THEN Flint offers recovery and logs the error category
+- AND it does not clear the saved vault reference
 
 ### Requirement: Surface user-facing failures
-
-The system SHALL present ordinary operational failures through a dismissible alert and loading failures through a recoverable screen with Retry, Choose another vault, and Export diagnostics.
+The system SHALL show ordinary errors in dismissible alerts and loading errors on a recovery screen with Retry, Choose another vault and Export diagnostics.
 
 #### Scenario: Vault opening fails
-
-- GIVEN the user attempts to open a vault
-- WHEN the open operation fails
-- THEN the app shows loading recovery or onboarding as appropriate
-- AND failed new-vault state is cleared without discarding unresolved edits from a previous vault
-- AND the app shows a user-facing error message and recovery actions
-- AND sanitized diagnostics retain the failed stage and error category
+- GIVEN the user tries to open a vault
+- WHEN opening fails
+- THEN Flint shows recovery or setup as appropriate
+- AND it clears failed new-vault state without discarding unresolved edits from the previous vault
+- AND it shows an understandable error and recovery actions, and records the failed step and error category without private data
