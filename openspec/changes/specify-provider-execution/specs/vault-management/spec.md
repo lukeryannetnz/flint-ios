@@ -1,20 +1,17 @@
 ## MODIFIED Requirements
 
 ### Requirement: Busy indication during vault operations
-
-The system SHALL show responsive busy state and stage/count progress while vault creation or opening is in progress, with cancellation and bounded recovery for provider delays.
+The system SHALL show responsive progress while creating or opening a vault, including the current step and files found, with cancellation and recovery for slow providers.
 
 #### Scenario: Long-running vault operation
-
-- GIVEN the user is creating or opening a vault
+- GIVEN a vault is being created or opened
 - WHEN the operation is running
-- THEN the app exposes busy state
-- AND the current screen presents progress and cancellation without disabling recovery controls
-- AND the app does not present an invented download percentage
+- THEN Flint shows that it is busy, along with progress and cancellation
+- AND recovery controls remain usable
+- AND it does not show a made-up download percentage
 
 #### Scenario: Cancel a provider-backed vault operation
-
-- WHEN the user cancels vault creation or opening
-- THEN the app requests worker cancellation and exits its blocking presentation
-- AND it reports any uncertain creation outcome before offering a safe retry
-- AND late work cannot replace current app state
+- WHEN the user cancels creating or opening a vault
+- THEN Flint asks the background work to stop and promptly ends the waiting screen
+- AND it explains any still-unknown creation result before a safe retry
+- AND work that finishes later cannot replace the current app state

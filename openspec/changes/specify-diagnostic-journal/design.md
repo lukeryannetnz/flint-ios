@@ -1,19 +1,19 @@
-# Design
+# Design: Debug logs that help explain failures
 
 ## Context
 
-This is spec PR 1/5 replacing the preserved PR #14. Alerts do not show which Dropbox operation stalled, and evidence disappears after termination. Define content-free correlated events and bounded local storage before adding collection or recovery behavior.
+Flint can freeze while opening a Dropbox folder, but its error alert does not tell us which step got stuck. A saved debug log will show the sequence of actions and how long each took, even after the app restarts.
 
 ## Goals / Non-Goals
 
-Goal: resolve **What evidence is useful, safe to retain, and cheap enough to collect?**. This PR defines behavior; implementation and device validation remain tracked work. Other layers have their own PRs.
+The goal is to answer: **Will these logs tell us what failed without collecting private note data or making the app slower?** This part defines the proposed behavior and its tests. Other PRs cover the remaining parts of the plan; the app has not been changed by these specs.
 
 ## Decisions
 
-1. Use typed events and allowlisted fields; arbitrary dictionaries make redaction difficult to audit.
-2. Use unified logging/signposts plus a separate bounded app-local writer; provider-backed logging would share the failure being diagnosed.
-3. This owns event/storage contracts. Hang monitors, platform payloads, export UI and recovery are reviewed in PR 2.
+1. Use a fixed set of log fields so a reviewer can check exactly what is collected. Free-form error text can contain filenames or note contents.
+2. Use Apple’s logging tools and performance timing markers, plus a background writer for the saved debug log. Saving logs inside Dropbox would make the logs depend on the same file access that may be stuck.
+3. This PR defines the log itself. Collecting crash reports, detecting freezes and letting a user export logs are covered by PR #16.
 
 ## Risks / Trade-offs
 
-Numeric budgets are initial acceptance limits, not measured performance. Platform/provider observations may be absent; tests and physical-device evidence must state uncertainty. The existing vault/markdown format is preserved.
+The limits are proposed acceptance criteria, not measurements of the current app. Some iOS or Dropbox information may be unavailable; logs and test records must state what is missing. Notes and images retain their current file formats.

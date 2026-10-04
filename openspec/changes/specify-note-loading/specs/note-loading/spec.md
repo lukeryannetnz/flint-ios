@@ -1,40 +1,40 @@
-# note-loading Specification
+# Load notes gradually and keep unsaved edits safe
 
 ## Purpose
 
-Define incremental note discovery, lazy bounded previews, pending content states and revision-safe persistence for provider vaults.
+Describe how Flint lists notes without reading every file first, loads previews only when needed, and saves the correct version without losing newer edits.
 
-Status: planned; the associated change's unchecked tasks identify implementation and validation still required.
+Status: proposed behavior, not yet implemented. The task list records the work and testing still needed.
 
 ## ADDED Requirements
 
-### Requirement: Discover metadata before content
-The system SHALL publish note metadata in bounded batches without eagerly reading every preview or image, preserving extensions, regular-file/hidden-file filters, relative paths and existing sort rules. Batch work SHALL yield capacity to explicit reads/writes. Partial discovery SHALL remain usable and visibly incomplete on failure.
+### Requirement: List files before reading all their contents
+The system SHALL show file details in limited batches without reading every preview or image first. It SHALL preserve supported file extensions, include regular files rather than folders, skip hidden files, preserve relative paths and keep existing sorting rules. Between batches it SHALL let requested reads/saves take priority; failed partial listing SHALL remain visible and clearly incomplete.
 
-#### Scenario: Optional content is unavailable
-- WHEN some metadata or preview reads fail or stall
-- THEN discovered notes remain usable, failures are recorded and previews show pending/unavailable states
-- AND previews are requested only for visible/recently requested notes, read at most 64 KiB, and decode only complete UTF-8 sequences
-- AND the preview cache stays within 4 MiB and invalidates on observed version change or explicit refresh
-- AND omitted, truncated and empty previews remain distinguishable
+#### Scenario: Some file details or previews cannot be loaded
+- WHEN these reads fail or stall
+- THEN notes already found remain available, errors are logged and previews show waiting/unavailable states
+- AND previews are read only for visible or recently requested notes, using at most 64 KiB of source and only complete UTF-8 text characters
+- AND stored previews use at most 4 MiB of memory and are refreshed when a file version changes or the user explicitly refreshes
+- AND a preview that was not requested, was shortened, was unavailable or was successfully read as empty has a distinguishable state
 
-### Requirement: Load selected content explicitly and safely
-The system SHALL separately expose selected-note loading with cancellable generation identity. It SHALL auto-select once from current sorted metadata when needed, without later batches overriding user selection. Editable note reads SHALL enforce an 8 MiB source limit during reading; failed/partial reads SHALL never become empty editable documents.
+### Requirement: Keep the browser usable while a selected note loads
+The system SHALL load selected-note contents separately, with a cancellable request ID. When needed it SHALL automatically select a note once from the current sorted list, without later results overriding user choice. Editable reads SHALL enforce an 8 MiB file-content limit as bytes arrive; failed or partial reads SHALL not become empty editable notes.
 
-#### Scenario: First note is unavailable or oversized
-- WHEN its content cannot be loaded or exceeds the size limit, including growth during reading
-- THEN the browser stays usable and shows pending or recoverable note state
-- AND another note can be selected without a stale fallback overriding it
+#### Scenario: The selected note is unavailable or too large
+- WHEN its contents cannot be read or exceed the limit, including growth while loading
+- THEN the browser remains usable and shows that the note is loading or could not be loaded
+- AND the user can choose another note without an earlier request later replacing it
 - AND partial text cannot be saved over the source and original markdown is unchanged
-- AND preparing markdown does not synchronously read referenced images
+- AND preparing the note’s formatted text does not synchronously read its images
 
-### Requirement: Preserve edits and write identity
-The system SHALL capture original destination, access lease, text revision and operation ID for ordered debounced saves. Completion SHALL clear dirty state only for the saved current revision. Failed/timed-out writes SHALL retain text, and navigation SHALL persist it or obtain an explicit retain/discard decision.
+### Requirement: Save the right version to the right file
+The system SHALL remember each save’s original destination, iOS file permission, text version and action ID, and save versions in order after the typing delay. Finishing an older save SHALL not mark newer text saved. Failed/timed-out saves SHALL retain editor text; navigation SHALL save it first or ask the user to keep a recovery copy or explicitly discard it.
 
-#### Scenario: Typing or navigation overlaps saving
-- WHEN newer edits arrive during a write
-- THEN old completion cannot overwrite or mark the new revision saved
-- AND a timed-out write has an uncertain outcome, retains its original destination, and cannot overlap a retry
-- AND navigation resolves persistence or retains a protected local recovery copy separate from diagnostics, unless the user explicitly discards it
-- AND metadata refresh does not reload editor content or convert a successful write into a failed-write claim
-- AND switching vault cannot write previous text into the new vault
+#### Scenario: The user types or changes notes while a save is running
+- WHEN new text is entered before an earlier save finishes
+- THEN the earlier result cannot replace or mark the newer text saved
+- AND a timed-out save remains an unknown result, keeps its original destination, and cannot overlap a retry
+- AND leaving the note either saves it or keeps a protected local recovery copy separate from debug logs, unless the user explicitly discards it
+- AND refreshing file details does not reload editor text or describe a successful write as failed because a later refresh failed
+- AND switching vaults cannot save the previous note’s text into the new vault

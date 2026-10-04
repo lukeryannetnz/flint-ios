@@ -1,48 +1,48 @@
-# provider-execution Specification
+# Background file loading that keeps the app responsive
 
 ## Purpose
 
-Define bounded background file execution, cancellation, access lifetimes and recoverable loading for Files-provider vaults.
+Describe how Flint does slow file work in the background, limits simultaneous work, and stops making the user wait indefinitely.
 
-Status: planned; the associated change's unchecked tasks identify implementation and validation still required.
+Status: proposed behavior, not yet implemented. The task list records the work and testing still needed.
 
 ## ADDED Requirements
 
-### Requirement: Isolate blocking provider work
-The system SHALL perform bookmark resolution/creation, security-scope acquisition, coordination, enumeration, metadata lookup, file creation/read/write/copy, image import/encoding and decoding outside the main actor. Presentation updates SHALL remain on the main actor; a main-actor Task wrapping synchronous calls SHALL NOT satisfy isolation.
+### Requirement: Do slow file work away from screen updates
+The system SHALL perform saved-folder-reference lookup/creation, iOS file-permission setup, read/write coordination, folder listing, file-detail lookup, file creation/read/write/copy, image imports/encoding and image preparation outside the main actor, the thread responsible for screen updates. Starting a Task on that same thread SHALL not count as background work.
 
-#### Scenario: Provider pauses during vault opening
-- WHEN a Files provider delays access to partially downloaded files
-- THEN rendering, taps, progress, cancellation and diagnostic export remain interactive
-- AND coordinated file access and original source/destination access scopes remain in use
-- AND evidence distinguishes coordination wait from accessor work
+#### Scenario: Dropbox pauses while supplying a file
+- WHEN a file provider, such as Dropbox through the Files app, delays partially downloaded content
+- THEN the screen, taps, progress, cancellation and debug-log export remain responsive
+- AND Flint still coordinates reads/writes with iOS and keeps permission for the original source/destination
+- AND logs distinguish waiting for iOS/provider access from the actual file read or write
 
-### Requirement: Bound attempts and worker capacity
-The system SHALL expose a slow state after five seconds and a usable screen or recoverable failure by 30 seconds of foreground-active loading. Foreground note/image reads and imports SHALL use the same deadline. Work SHALL be limited to two active blocking jobs, one per vault, and 32 pending jobs; UI deadlines SHALL pause during background suspension.
+### Requirement: Limit waiting time and simultaneous background work
+The system SHALL show a slow state after five seconds and a usable screen or recovery options within 30 seconds while the app is on screen and active. Note/image reads and imports SHALL use the same deadline. At most two blocking jobs SHALL run at once, at most one per vault, with at most 32 waiting; time suspended in the background SHALL not count toward these deadlines.
 
-#### Scenario: Timeout occurs inside an accessor
-- WHEN a loading attempt times out or is cancelled
-- THEN the UI recovers without awaiting a blocked accessor, requests cancellation and invalidates the attempt ID
-- AND late results cannot modify current vault, editor, selection or alert state
-- AND cancelled queued jobs are removed; retries do not create unlimited replacement workers
-- AND another vault may use the remaining slot, while retrying the draining vault reports that work is still stopping
-- AND if both slots remain blocked, new work returns a recoverable busy state
-- AND access scopes are released only after actual worker completion
+#### Scenario: A started read does not stop when cancelled
+- WHEN a loading attempt times out or the user cancels it
+- THEN Flint stops making the screen wait, asks the file operation to stop, and marks that attempt as obsolete
+- AND later results cannot change the current vault, editor text, note selection or alert
+- AND cancelled waiting jobs are removed; retry does not start unlimited replacement jobs
+- AND another vault can use the remaining job slot, while retrying the still-running vault explains that its previous work has not stopped yet
+- AND if both slots are still blocked, new requests get a recoverable busy message
+- AND iOS file permissions are released only when the corresponding work actually finishes
 
-### Requirement: Expose honest progress and outcomes
-The system SHALL show operation stage and observed discovery counts, not invented totals or download percentages. Timed-out writes/creation SHALL report uncertain outcomes rather than claiming rollback. Loading recovery SHALL offer Retry, Choose another vault and Export diagnostics and preserve bookmarks unless independently proven invalid.
+### Requirement: Show progress and write outcomes honestly
+The system SHALL show the current step and the number of files found rather than inventing a total or download percentage. A timed-out save or creation SHALL have an unknown outcome until its work finishes, not be described as rolled back. Recovery SHALL offer Retry, Choose another vault and Export diagnostics, preserving saved vault references unless independently proven invalid.
 
-#### Scenario: Cancel a vault attempt
-- WHEN the user cancels creation or opening
-- THEN the loading presentation ends promptly and evidence records cancellation
-- AND an already-running accessor may finish without changing current UI state
-- AND retry of a write or creation waits for its outcome rather than overlapping it
+#### Scenario: Cancel opening or creating a vault
+- WHEN the user cancels the attempt
+- THEN the waiting screen ends promptly and the cancellation is logged
+- AND already-started file work may finish without changing the current screen
+- AND another save/creation attempt waits for the first result instead of overlapping it
 
-### Requirement: Verify real provider responsiveness
-The implementation SHALL include deterministic blocked-before-accessor and blocked-inside-accessor tests and recorded physical-iPhone Dropbox validation before being declared validated.
+### Requirement: Test the behavior with real Dropbox files on an iPhone
+The implementation SHALL include repeatable tests for blocked access before and during a read/write, plus recorded physical-iPhone Dropbox tests before it is declared validated.
 
-#### Scenario: Provider acceptance
-- WHEN downloaded, partially downloaded and unavailable fixtures are exercised online, offline and during download
-- THEN a trace verifies no provider wait is on the main thread, deadlines hold, capacity/access lifetimes are bounded and files remain intact
-- AND commit, device/iOS/provider versions, fixture state, timings and available crash/watchdog/jetsam reports are recorded
-- AND missing device evidence leaves validation pending even if simulator tests pass
+#### Scenario: Check downloaded and partly downloaded files
+- WHEN downloaded, partially downloaded and unavailable test files are opened online, offline and during download
+- THEN a performance recording shows no file-provider waiting on the screen-update thread, deadlines are met, work/permission limits hold and files are intact
+- AND the tested code version, device/iOS/Dropbox versions, test-file state, timings and available crash/OS-termination reports are recorded
+- AND successful simulator tests do not replace missing iPhone evidence
