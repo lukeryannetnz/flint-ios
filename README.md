@@ -6,14 +6,11 @@ Flint is a native SwiftUI markdown note-taking app built around user-selected va
 
 Strike a spark. Keep every note in a markdown vault you own.
 
-## Current scope
+## Scope and specifications
 
-- Create a vault by choosing a parent folder and supplying a custom vault name.
-- Open an existing vault by selecting a folder from Files.
-- Persist vault access with security-scoped bookmarks.
-- List markdown notes stored directly in the vault.
-- Create new markdown notes.
-- Edit notes with autosave.
+Flint lets you create or open a markdown vault in Files, organize your notes, and write with autosave. Notes and their images stay in folders you control, while Flint manages access to the vault and restores your editing session.
+
+The [OpenSpec specifications](openspec/specs/) are the source of truth for current behavior. Update the relevant spec before changing the app; proposals and implementation plans live in [OpenSpec changes](openspec/changes/).
 
 ## Shared language
 
@@ -21,25 +18,16 @@ Start with the [glossary](GLOSSARY.md) for common terms and the [domain model](d
 
 ## Architecture
 
-- `Flint/Models.swift`: Foundation-only vault and note values, folder organization, and list preview helpers.
-- `Flint/Documents/FlintRichTextCodec.swift`: native rich text conversion, semantic formatting, and markdown serialization.
-- `Flint/Documents/FlintMarkdownImageAttachment.swift`: UIKit image attachments, captions, and layout rendering.
-- `Flint/Documents/MarkdownDocument.swift`: Foundation-only markdown normalization and cached HTML rendering.
-- `Flint/ViewModels/AppModel.swift`: app state and vault lifecycle orchestration.
-- `Flint/Services/VaultBookmarkStore.swift`: bookmark persistence for reopening external folders.
-- `Flint/Services/VaultFileService.swift`: coordinated file-system access for vault and note operations.
-- `Flint/Views/`: onboarding, folder picker bridging, and the editor shell.
-- `FlintTests/`: unit tests for the app model and file service.
+```mermaid
+flowchart TD
+    UI[SwiftUI screens and native editor] --> App[App state and workflows]
+    UI --> Documents[Markdown and rich text conversion]
+    App --> Storage[Vault file access]
+    App --> Bookmarks[Saved vault access]
+    Storage --> Files[Vault folders in Files providers]
+```
 
-## OpenSpec
-
-The repository now includes checked-in OpenSpec documentation for Flint's current behavior under `openspec/`.
-
-- `openspec/specs/app-bootstrap/spec.md`: app launch, bookmark restoration, onboarding, and alert behavior
-- `openspec/specs/vault-management/spec.md`: creating and opening vaults from Files providers
-- `openspec/specs/note-management/spec.md`: note discovery, creation, editing, and autosave behavior
-
-Future changes can add proposal artifacts under `openspec/changes/` and keep `openspec/specs/` as the source of truth for current functionality.
+The screens and editor handle browsing and writing. App state coordinates opening vaults, loading notes, and saving edits. Document conversion translates between the editor's rich text and markdown files, including images. Vault file access reads and writes those files through the selected Files provider, while saved bookmarks let Flint reopen the vault on later launches.
 
 ## Signing
 
