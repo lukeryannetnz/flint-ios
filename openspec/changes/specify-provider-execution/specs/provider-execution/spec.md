@@ -9,7 +9,7 @@ Status: proposed behavior, not yet implemented. The task list records the work a
 ## ADDED Requirements
 
 ### Requirement: Do slow file work away from screen updates
-The system SHALL perform saved-folder-reference lookup/creation, iOS file-permission setup, read/write coordination, folder listing, file-detail lookup, file creation/read/write/copy, image imports/encoding and image preparation outside the main actor, the thread responsible for screen updates. Starting a Task on that same thread SHALL not count as background work.
+The system SHALL perform saved-folder-reference lookup/creation, iOS file-permission setup, read/write coordination, folder listing, file-detail lookup, file creation/read/write/copy, image imports/encoding and image preparation outside the main actor, the thread responsible for screen updates. Synchronous file-provider calls SHALL use a dedicated blocking worker, separate from Swift’s cooperative executor (the shared workers used by asynchronous Swift tasks). Blocking a non-main Swift actor or cooperative Task SHALL not satisfy this requirement. Starting a Task on the screen-update thread SHALL not count as background work.
 
 #### Scenario: Dropbox pauses while supplying a file
 - WHEN a file provider, such as Dropbox through the Files app, delays partially downloaded content

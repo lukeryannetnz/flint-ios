@@ -9,17 +9,19 @@ Status: proposed revisions in this specification are not yet implemented; the as
 ## Requirements
 
 ### Requirement: Initial launch state
-
-The system SHALL begin in a loading state while vault restoration is attempted.
+The system SHALL start with a responsive branded loading screen while reopening the saved vault, show slow progress after 5 seconds, and show a usable browser or recovery options within 30 seconds while the app is on screen and active.
 
 #### Scenario: Bootstrap starts
+- GIVEN Flint has just launched
+- WHEN its first screen appears
+- THEN reopening the vault starts once, with a full-screen loading view until startup chooses the next screen
+- AND the loading view covers the display, uses Flint branding and does not expose default system background chrome
 
-- GIVEN the app has just launched
-- WHEN the root view appears
-- THEN the app model starts bootstrap once
-- AND the interface shows a full-screen loading state until bootstrap decides the next phase
-- AND the loading presentation covers the entire display without exposing default system background chrome
-- AND the loading presentation uses Flint branding rather than a bare progress indicator
+#### Scenario: Provider restoration exceeds its deadline
+- GIVEN provider content is unavailable or stuck
+- WHEN the active loading time reaches its deadline
+- THEN Flint offers Retry, Choose another vault and Export diagnostics
+- AND those controls remain responsive without waiting for blocked work to stop
 
 ### Requirement: Onboarding without a stored vault
 
@@ -61,15 +63,15 @@ The system SHALL clear a saved folder reference only when checking it proves it 
 - AND it does not clear the saved vault reference
 
 ### Requirement: Single active security-scoped vault
-
-The system SHALL release security-scoped access for the previous vault before switching to another vault.
+The system SHALL show one active vault while keeping iOS file permissions for any previous background operation that is still running. These permissions are security-scoped access: iOS grants the app temporary access to a chosen folder. Cancellation SHALL release permission only after the last operation using it finishes.
 
 #### Scenario: Open a different vault
-
-- GIVEN a vault is currently open
-- WHEN the user opens another vault
-- THEN any pending autosave task is cancelled
-- AND security-scoped access to the previous vault is stopped before the new vault becomes active
+- GIVEN a vault is open
+- WHEN the user chooses another vault
+- THEN unsaved edits are saved or explicitly kept/discarded before editor state changes
+- AND obsolete waiting autosaves are cancelled
+- AND running operations keep permission for their original vault until they finish, without changing the newly selected vault’s screen or document
+- AND access to the old vault is released when its remaining operations finish
 
 ### Requirement: Surface user-facing failures
 The system SHALL show ordinary errors in dismissible alerts and loading errors on a recovery screen with Retry, Choose another vault and Export diagnostics.

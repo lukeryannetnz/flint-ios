@@ -4,6 +4,8 @@
 
 Define how Flint lets users create a new vault or open an existing vault folder from Files providers while preserving future access with bookmarks.
 
+Status: proposed revisions in this specification are not yet implemented; the associated change tasks track implementation and validation.
+
 ## Requirements
 
 ### Requirement: Create vault from onboarding
@@ -71,12 +73,17 @@ The system SHALL not overwrite an existing directory when creating a vault.
 - AND the user receives an already exists error for that name
 
 ### Requirement: Busy indication during vault operations
-
-The system SHALL show busy state while vault creation or vault opening is in progress.
+The system SHALL show responsive progress while creating or opening a vault, including the current step and files found, with cancellation and recovery for slow providers.
 
 #### Scenario: Long-running vault operation
-
-- GIVEN the user is creating or opening a vault
+- GIVEN a vault is being created or opened
 - WHEN the operation is running
-- THEN the app exposes busy state
-- AND the current screen presents a progress indicator overlay
+- THEN Flint shows that it is busy, along with progress and cancellation
+- AND recovery controls remain usable
+- AND it does not show a made-up download percentage
+
+#### Scenario: Cancel a provider-backed vault operation
+- WHEN the user cancels creating or opening a vault
+- THEN Flint asks the background work to stop and promptly ends the waiting screen
+- AND it explains any still-unknown creation result before a safe retry
+- AND work that finishes later cannot replace the current app state
