@@ -95,16 +95,40 @@ Note-list refresh SHALL update metadata without launching background navigation 
 
 ### Requirement: Create markdown notes
 
-The system SHALL create new notes as markdown files inside the active vault.
+The system SHALL create new notes as markdown files inside the active vault, using the current folder context when the user is browsing folders. The creation sheet SHALL display the destination folder. Recent mode and an unavailable folder context SHALL use the vault root.
 
-#### Scenario: Create note without extension
+#### Scenario: Create note in vault root
 
 - GIVEN a vault is active
+- AND the user is browsing the vault root or Recent mode
 - WHEN the user creates a note named `Daily Note`
 - THEN Flint creates `Daily Note.md` in the vault root
 - AND the initial file contents are empty
 - AND Flint reloads notes
 - AND Flint opens the created note
+
+#### Scenario: Create note in the current folder
+
+- GIVEN the user is browsing `Projects/iOS` in the folder browser
+- WHEN the user opens the creation sheet
+- THEN the sheet displays `Projects/iOS` as the destination
+- AND creating `Daily Note` writes an empty `Projects/iOS/Daily Note.md`
+- AND Flint reloads notes and opens the created note before creation returns
+
+#### Scenario: Folder context is unavailable
+
+- GIVEN the browsed folder is no longer present in the refreshed folder tree
+- WHEN Flint resolves the creation destination
+- THEN the browser returns to the vault root
+- AND the creation sheet displays `Vault Root`
+- AND new notes are created at the vault root
+
+#### Scenario: Create a note from Recent mode
+
+- GIVEN the user previously browsed a subfolder
+- WHEN the user switches to Recent mode and opens the creation sheet
+- THEN the sheet displays `Vault Root`
+- AND new notes are created at the vault root
 
 #### Scenario: Create note with markdown extension
 
@@ -130,9 +154,16 @@ The system SHALL reject invalid note names before creating a new note file.
 
 #### Scenario: Duplicate note name
 
-- GIVEN the vault already contains a file with the requested note filename
+- GIVEN the destination folder already contains a file with the requested note filename
 - WHEN Flint attempts to create the note
 - THEN the operation fails with an already exists error for that filename
+
+#### Scenario: Same filename in another folder
+
+- GIVEN another folder contains the requested note filename
+- AND the destination folder does not
+- WHEN Flint creates the note
+- THEN creation succeeds in the destination folder
 
 ### Requirement: Read note content into a rich text document
 

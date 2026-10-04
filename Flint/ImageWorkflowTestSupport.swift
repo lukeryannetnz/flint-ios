@@ -48,6 +48,14 @@ enum ImageWorkflowTestSupport {
             try "Before\n![Missing caption](Missing.png)\nAfter".write(to: root.appendingPathComponent("Missing.md"), atomically: true, encoding: .utf8)
             try "Before\nAfter".write(to: root.appendingPathComponent("Editable.md"), atomically: true, encoding: .utf8)
         }
+        if ProcessInfo.processInfo.environment["FLINT_FOLDER_TEST"] == "1" {
+            let folder = root.appendingPathComponent("Projects/iOS", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let seed = folder.appendingPathComponent("Seed.md")
+            if !FileManager.default.fileExists(atPath: seed.path) {
+                try "Nested fixture".write(to: seed, atomically: true, encoding: .utf8)
+            }
+        }
         return root
     }
     static func snapshot(model: AppModel) -> String {
@@ -67,7 +75,7 @@ enum ImageWorkflowTestSupport {
                         "readable": resolved.flatMap { UIImage(contentsOfFile: $0.path) } != nil]
             }
         }
-        let value: [String: Any] = ["saved": saved, "editor": model.noteText,
+        let value: [String: Any] = ["notePath": note.relativePath, "saved": saved, "editor": model.noteText,
                                    "unsaved": model.hasUnsavedChanges, "assets": assets(in: saved), "editorAssets": assets(in: model.noteText),
                                    "sourceExists": sourceURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false]
         guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),

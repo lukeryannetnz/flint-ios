@@ -44,6 +44,37 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(files.readNoteCalls, [files.createdVaultURL.appendingPathComponent("Created.md")])
     }
 
+    func testVaultFolderResolvedPathComponentsFallsBackToRootForMissingFolder() {
+        let notes = [
+            makeNote(
+                title: "Runbook",
+                url: URL(fileURLWithPath: "/tmp/vault/Projects/iOS/runbook.md"),
+                folderPath: "Projects/iOS",
+                createdAt: .init(timeIntervalSince1970: 300)
+            )
+        ]
+
+        let root = VaultFolder.root(vaultName: "Flint Vault", notes: notes)
+
+        XCTAssertEqual(root.resolvedPathComponents(for: ["Projects", "iOS"]), ["Projects", "iOS"])
+        XCTAssertEqual(root.resolvedPathComponents(for: ["Projects", "Missing"]), [])
+    }
+
+    func testCreateNoteInNestedFolderSelectsCreatedNoteWithoutDelayedNavigation() async {
+        let files = FileServiceSpy()
+        let existing = makeNote(title: "Existing", url: files.createdVaultURL.appendingPathComponent("Existing.md"))
+        files.notesToReturn = [existing]
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        await model.openVault(at: files.createdVaultURL)
+        await model.createNote(named: "Daily.md", inFolderPath: ["Projects", "iOS"])
+        let expected = files.createdVaultURL.appendingPathComponent("Projects/iOS/Daily.md")
+        XCTAssertEqual(model.selectedNote?.url, expected)
+        await Task.yield()
+        XCTAssertEqual(model.selectedNote?.url, expected)
+        XCTAssertEqual(files.readNoteCalls, [existing.url, expected])
+        XCTAssertFalse(model.hasUnsavedChanges)
+    }
+
     func testBootstrapWithoutStoredBookmarkShowsOnboarding() async {
         let bookmarkStore = BookmarkStoreSpy()
         let fileService = FileServiceSpy()
