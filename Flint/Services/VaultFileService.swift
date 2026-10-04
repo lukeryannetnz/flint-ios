@@ -42,160 +42,178 @@ final class VaultFileService: VaultFileServing {
     }
 
     func createVault(named name: String, in parentURL: URL) throws -> URL {
-        let vaultName = try validatedDisplayName(name)
+        return try DebugLog.shared.measure(.vaultCreate, file: parentURL) {
+            let vaultName = try validatedDisplayName(name)
 
-        return try coordinatedWrite(at: parentURL) { coordinatedParentURL in
-            let vaultURL = coordinatedParentURL.appendingPathComponent(vaultName, isDirectory: true)
+            return try coordinatedWrite(at: parentURL) { coordinatedParentURL in
+                let vaultURL = coordinatedParentURL.appendingPathComponent(vaultName, isDirectory: true)
 
-            guard !fileManager.fileExists(atPath: vaultURL.path) else {
-                throw VaultError.itemAlreadyExists(vaultName)
+                guard !fileManager.fileExists(atPath: vaultURL.path) else {
+                    throw VaultError.itemAlreadyExists(vaultName)
+                }
+
+                try fileManager.createDirectory(at: vaultURL, withIntermediateDirectories: false)
+                return vaultURL
             }
-
-            try fileManager.createDirectory(at: vaultURL, withIntermediateDirectories: false)
-            return vaultURL
         }
     }
 
     func listMarkdownNotes(in vaultURL: URL) throws -> [NoteItem] {
-        try coordinatedRead(at: vaultURL) { coordinatedVaultURL in
-            guard fileManager.fileExists(atPath: coordinatedVaultURL.path) else {
-                throw VaultError.inaccessibleVault
-            }
-
-            let enumerator = fileManager.enumerator(
-                at: coordinatedVaultURL,
-                includingPropertiesForKeys: [.isRegularFileKey, .creationDateKey, .contentModificationDateKey],
-                options: [.skipsHiddenFiles]
-            )
-
-            let notes = (enumerator?.compactMap { $0 as? URL } ?? [])
-                .filter { url in
-                    let ext = url.pathExtension.lowercased()
-                    return ext == "md" || ext == "markdown"
+        return try DebugLog.shared.measure(.enumeration, file: vaultURL) {
+            try coordinatedRead(at: vaultURL) { coordinatedVaultURL in
+                guard fileManager.fileExists(atPath: coordinatedVaultURL.path) else {
+                    throw VaultError.inaccessibleVault
                 }
-                .map { url in
-                    let relativePath = url.path.replacingOccurrences(
-                        of: coordinatedVaultURL.path + "/",
-                        with: ""
-                    )
-                    let folderURL = url.deletingLastPathComponent()
-                    let relativeFolderPath = folderURL.path.replacingOccurrences(
-                        of: coordinatedVaultURL.path,
-                        with: ""
-                    )
-                    let normalizedFolderPath = relativeFolderPath
-                        .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                    let resourceValues = try? url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
-                    let previewMarkdown = (try? makePreviewMarkdown(for: url)) ?? ""
 
-                    return NoteItem(
-                        url: url,
-                        title: url.deletingPathExtension().lastPathComponent,
-                        relativePath: relativePath,
-                        folderPath: normalizedFolderPath,
-                        folderName: normalizedFolderPath.components(separatedBy: "/").last.flatMap { $0.isEmpty ? nil : $0 } ?? "Vault",
-                        previewMarkdown: previewMarkdown,
-                        createdAt: resourceValues?.creationDate ?? .distantPast,
-                        lastModifiedAt: resourceValues?.contentModificationDate ?? .distantPast
-                    )
-                }
-                .sorted { (lhs: NoteItem, rhs: NoteItem) in
-                    if lhs.lastModifiedAt != rhs.lastModifiedAt {
-                        return lhs.lastModifiedAt > rhs.lastModifiedAt
+                let enumerator = fileManager.enumerator(
+                    at: coordinatedVaultURL,
+                    includingPropertiesForKeys: [.isRegularFileKey, .creationDateKey, .contentModificationDateKey],
+                    options: [.skipsHiddenFiles]
+                )
+
+                let notes = (enumerator?.compactMap { $0 as? URL } ?? [])
+                    .filter { url in
+                        let ext = url.pathExtension.lowercased()
+                        return ext == "md" || ext == "markdown"
+                    }
+                    .map { url in
+                        let relativePath = url.path.replacingOccurrences(
+                            of: coordinatedVaultURL.path + "/",
+                            with: ""
+                        )
+                        let folderURL = url.deletingLastPathComponent()
+                        let relativeFolderPath = folderURL.path.replacingOccurrences(
+                            of: coordinatedVaultURL.path,
+                            with: ""
+                        )
+                        let normalizedFolderPath = relativeFolderPath
+                            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                        let resourceValues = try? DebugLog.shared.measure(.metadata, file: url) { try url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey]) }
+                        let previewMarkdown = (try? makePreviewMarkdown(for: url)) ?? ""
+
+                        return NoteItem(
+                            url: url,
+                            title: url.deletingPathExtension().lastPathComponent,
+                            relativePath: relativePath,
+                            folderPath: normalizedFolderPath,
+                            folderName: normalizedFolderPath.components(separatedBy: "/").last.flatMap { $0.isEmpty ? nil : $0 } ?? "Vault",
+                            previewMarkdown: previewMarkdown,
+                            createdAt: resourceValues?.creationDate ?? .distantPast,
+                            lastModifiedAt: resourceValues?.contentModificationDate ?? .distantPast
+                        )
+                    }
+                    .sorted { (lhs: NoteItem, rhs: NoteItem) in
+                        if lhs.lastModifiedAt != rhs.lastModifiedAt {
+                            return lhs.lastModifiedAt > rhs.lastModifiedAt
+                        }
+
+                        return lhs.relativePath.localizedCaseInsensitiveCompare(rhs.relativePath) == .orderedAscending
                     }
 
-                    return lhs.relativePath.localizedCaseInsensitiveCompare(rhs.relativePath) == .orderedAscending
-                }
-
-            return notes
+                DebugLog.shared.observe(.enumeration, count: notes.count)
+                return notes
+            }
         }
     }
 
     func createNote(named name: String, in directoryURL: URL) throws -> URL {
-        let fileName = try validatedMarkdownFilename(name)
+        return try DebugLog.shared.measure(.noteCreate, file: directoryURL) {
+            let fileName = try validatedMarkdownFilename(name)
 
-        return try coordinatedWrite(at: directoryURL) { coordinatedDirectoryURL in
-            let noteURL = coordinatedDirectoryURL.appendingPathComponent(fileName, isDirectory: false)
+            return try coordinatedWrite(at: directoryURL) { coordinatedDirectoryURL in
+                let noteURL = coordinatedDirectoryURL.appendingPathComponent(fileName, isDirectory: false)
 
-            guard !fileManager.fileExists(atPath: noteURL.path) else {
-                throw VaultError.itemAlreadyExists(fileName)
+                guard !fileManager.fileExists(atPath: noteURL.path) else {
+                    throw VaultError.itemAlreadyExists(fileName)
+                }
+
+                try "".write(to: noteURL, atomically: true, encoding: .utf8)
+                return noteURL
             }
-
-            try "".write(to: noteURL, atomically: true, encoding: .utf8)
-            return noteURL
         }
     }
 
     func readNote(at url: URL) throws -> String {
-        try coordinatedRead(at: url) { coordinatedURL in
-            guard fileManager.fileExists(atPath: coordinatedURL.path) else {
-                throw VaultError.noteMissing
-            }
+        return try DebugLog.shared.measure(.noteRead, file: url) {
+            try coordinatedRead(at: url) { coordinatedURL in
+                guard fileManager.fileExists(atPath: coordinatedURL.path) else {
+                    throw VaultError.noteMissing
+                }
 
-            return try String(contentsOf: coordinatedURL, encoding: .utf8)
+                let text = try String(contentsOf: coordinatedURL, encoding: .utf8)
+                DebugLog.shared.observe(.noteRead, bytes: text.utf8.count)
+                return text
+            }
         }
     }
 
     func saveNote(_ text: String, at url: URL) throws {
-        #if DEBUG
-        if ImageWorkflowSaveFailure.enabled { throw CocoaError(.fileWriteNoPermission) }
-        #endif
-        try coordinatedWrite(at: url) { coordinatedURL in
-            guard fileManager.fileExists(atPath: coordinatedURL.path) else {
-                throw VaultError.noteMissing
-            }
+        return try DebugLog.shared.measure(.noteSave, file: url) {
+            #if DEBUG
+            if ImageWorkflowSaveFailure.enabled { throw CocoaError(.fileWriteNoPermission) }
+            #endif
+            try coordinatedWrite(at: url) { coordinatedURL in
+                guard fileManager.fileExists(atPath: coordinatedURL.path) else {
+                    throw VaultError.noteMissing
+                }
 
-            try text.write(to: coordinatedURL, atomically: true, encoding: .utf8)
+                try text.write(to: coordinatedURL, atomically: true, encoding: .utf8)
+                DebugLog.shared.observe(.noteSave, bytes: text.utf8.count)
+            }
         }
     }
 
     func importImage(from sourceURL: URL, preferredFilename: String?, into noteURL: URL, vaultURL: URL) throws -> InsertedNoteImage {
-        try coordinatedWrite(at: vaultURL) { coordinatedVaultURL in
-            let assetFolderURL = noteAssetFolderURL(for: noteURL)
-            try fileManager.createDirectory(at: assetFolderURL, withIntermediateDirectories: true)
+        return try DebugLog.shared.measure(.imageImport, file: sourceURL) {
+            try coordinatedWrite(at: vaultURL) { coordinatedVaultURL in
+                let assetFolderURL = noteAssetFolderURL(for: noteURL)
+                try fileManager.createDirectory(at: assetFolderURL, withIntermediateDirectories: true)
 
-            let preferredBaseName = preferredFilename ?? sourceURL.deletingPathExtension().lastPathComponent
-            let pathExtension = sourceURL.pathExtension.isEmpty ? "jpg" : sourceURL.pathExtension.lowercased()
-            let targetURL = try uniqueAssetURL(in: assetFolderURL, preferredBaseName: preferredBaseName, pathExtension: pathExtension)
+                let preferredBaseName = preferredFilename ?? sourceURL.deletingPathExtension().lastPathComponent
+                let pathExtension = sourceURL.pathExtension.isEmpty ? "jpg" : sourceURL.pathExtension.lowercased()
+                let targetURL = try uniqueAssetURL(in: assetFolderURL, preferredBaseName: preferredBaseName, pathExtension: pathExtension)
 
-            if fileManager.fileExists(atPath: targetURL.path) {
-                try fileManager.removeItem(at: targetURL)
+                if fileManager.fileExists(atPath: targetURL.path) {
+                    try fileManager.removeItem(at: targetURL)
+                }
+                try fileManager.copyItem(at: sourceURL, to: targetURL)
+
+                let relativePath = relativeMarkdownPath(from: noteURL, to: targetURL)
+                let altText = displayAltText(from: preferredBaseName)
+                let markdownSource = "![\(altText)](\(relativePath))"
+
+                guard Self.resolveImageURL(markdownPath: relativePath, noteURL: noteURL, vaultURL: coordinatedVaultURL) != nil else {
+                    throw VaultError.inaccessibleVault
+                }
+
+                return InsertedNoteImage(markdownSource: markdownSource, assetURL: targetURL, altText: altText)
             }
-            try fileManager.copyItem(at: sourceURL, to: targetURL)
-
-            let relativePath = relativeMarkdownPath(from: noteURL, to: targetURL)
-            let altText = displayAltText(from: preferredBaseName)
-            let markdownSource = "![\(altText)](\(relativePath))"
-
-            guard Self.resolveImageURL(markdownPath: relativePath, noteURL: noteURL, vaultURL: coordinatedVaultURL) != nil else {
-                throw VaultError.inaccessibleVault
-            }
-
-            return InsertedNoteImage(markdownSource: markdownSource, assetURL: targetURL, altText: altText)
         }
     }
 
     func importCameraImage(_ image: UIImage, into noteURL: URL, vaultURL: URL) throws -> InsertedNoteImage {
-        try coordinatedWrite(at: vaultURL) { coordinatedVaultURL in
-            let assetFolderURL = noteAssetFolderURL(for: noteURL)
-            try fileManager.createDirectory(at: assetFolderURL, withIntermediateDirectories: true)
+        return try DebugLog.shared.measure(.imageImport, file: noteURL) {
+            try coordinatedWrite(at: vaultURL) { coordinatedVaultURL in
+                let assetFolderURL = noteAssetFolderURL(for: noteURL)
+                try fileManager.createDirectory(at: assetFolderURL, withIntermediateDirectories: true)
 
-            let preferredBaseName = "Photo \(timestampFormatter.string(from: Date()))"
-            let targetURL = try uniqueAssetURL(in: assetFolderURL, preferredBaseName: preferredBaseName, pathExtension: "jpg")
-            guard let jpegData = image.jpegData(compressionQuality: 0.9) else {
-                throw VaultError.inaccessibleVault
+                let preferredBaseName = "Photo \(timestampFormatter.string(from: Date()))"
+                let targetURL = try uniqueAssetURL(in: assetFolderURL, preferredBaseName: preferredBaseName, pathExtension: "jpg")
+                guard let jpegData = DebugLog.shared.measure(.imageEncode, { image.jpegData(compressionQuality: 0.9) }) else {
+                    throw VaultError.inaccessibleVault
+                }
+                try jpegData.write(to: targetURL, options: .atomic)
+
+                let relativePath = relativeMarkdownPath(from: noteURL, to: targetURL)
+                let altText = displayAltText(from: preferredBaseName)
+                let markdownSource = "![\(altText)](\(relativePath))"
+
+                guard Self.resolveImageURL(markdownPath: relativePath, noteURL: noteURL, vaultURL: coordinatedVaultURL) != nil else {
+                    throw VaultError.inaccessibleVault
+                }
+
+                return InsertedNoteImage(markdownSource: markdownSource, assetURL: targetURL, altText: altText)
             }
-            try jpegData.write(to: targetURL, options: .atomic)
-
-            let relativePath = relativeMarkdownPath(from: noteURL, to: targetURL)
-            let altText = displayAltText(from: preferredBaseName)
-            let markdownSource = "![\(altText)](\(relativePath))"
-
-            guard Self.resolveImageURL(markdownPath: relativePath, noteURL: noteURL, vaultURL: coordinatedVaultURL) != nil else {
-                throw VaultError.inaccessibleVault
-            }
-
-            return InsertedNoteImage(markdownSource: markdownSource, assetURL: targetURL, altText: altText)
         }
     }
 
@@ -219,61 +237,63 @@ final class VaultFileService: VaultFileServing {
     }
 
     private func makePreviewMarkdown(for url: URL) throws -> String {
-        let contents = try String(contentsOf: url, encoding: .utf8)
-        let normalized = MarkdownDocument.normalizedMarkdown(
-            noteTitle: url.deletingPathExtension().lastPathComponent,
-            markdown: contents
-        )
-        let lines = normalized.components(separatedBy: .newlines)
-        var previewLines: [String] = []
-        var characterCount = 0
-        var isInsideCodeFence = false
+        return try DebugLog.shared.measure(.preview, file: url) {
+            let contents = try String(contentsOf: url, encoding: .utf8)
+            let normalized = MarkdownDocument.normalizedMarkdown(
+                noteTitle: url.deletingPathExtension().lastPathComponent,
+                markdown: contents
+            )
+            let lines = normalized.components(separatedBy: .newlines)
+            var previewLines: [String] = []
+            var characterCount = 0
+            var isInsideCodeFence = false
 
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let fence = fencedCodeDelimiter(in: trimmed) {
-                isInsideCodeFence.toggle()
-                if isInsideCodeFence, previewLines.isEmpty {
-                    previewLines.append("`\(fence)`")
-                    characterCount += fence.count + 2
+            for line in lines {
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let fence = fencedCodeDelimiter(in: trimmed) {
+                    isInsideCodeFence.toggle()
+                    if isInsideCodeFence, previewLines.isEmpty {
+                        previewLines.append("`\(fence)`")
+                        characterCount += fence.count + 2
+                    }
+                    continue
                 }
-                continue
-            }
 
-            guard !isInsideCodeFence else { continue }
+                guard !isInsideCodeFence else { continue }
 
-            if trimmed.isEmpty {
-                if !previewLines.isEmpty, previewLines.last != "" {
-                    previewLines.append("")
+                if trimmed.isEmpty {
+                    if !previewLines.isEmpty, previewLines.last != "" {
+                        previewLines.append("")
+                    }
+                    continue
                 }
-                continue
+
+                if isTableSeparator(trimmed) {
+                    continue
+                }
+
+                let previewLine = previewDisplayLine(for: trimmed)
+                guard !previewLine.isEmpty else { continue }
+
+                let separatorCost = previewLines.isEmpty ? 0 : 1
+                if characterCount + previewLine.count + separatorCost > 220 {
+                    break
+                }
+
+                previewLines.append(previewLine)
+                characterCount += previewLine.count + separatorCost
+
+                if previewLines.count >= 4 {
+                    break
+                }
             }
 
-            if isTableSeparator(trimmed) {
-                continue
+            while previewLines.last == "" {
+                previewLines.removeLast()
             }
 
-            let previewLine = previewDisplayLine(for: trimmed)
-            guard !previewLine.isEmpty else { continue }
-
-            let separatorCost = previewLines.isEmpty ? 0 : 1
-            if characterCount + previewLine.count + separatorCost > 220 {
-                break
-            }
-
-            previewLines.append(previewLine)
-            characterCount += previewLine.count + separatorCost
-
-            if previewLines.count >= 4 {
-                break
-            }
+            return previewLines.joined(separator: "\n")
         }
-
-        while previewLines.last == "" {
-            previewLines.removeLast()
-        }
-
-        return previewLines.joined(separator: "\n")
     }
 
     private func previewDisplayLine(for line: String) -> String {
@@ -379,17 +399,21 @@ final class VaultFileService: VaultFileServing {
     }
 
     private func coordinatedRead<T>(at url: URL, accessor: (URL) throws -> T) throws -> T {
+        let waiting = DebugLog.shared.begin(.coordinationRead, file: url)
+        defer { waiting.finish(.abandonment) }
         let coordinator = NSFileCoordinator()
         var coordinationError: NSError?
         var result: Result<T, Error>?
 
         coordinator.coordinate(readingItemAt: url, options: [], error: &coordinationError) { coordinatedURL in
+            waiting.finish(.success)
             result = Result {
-                try accessor(coordinatedURL)
+                try DebugLog.shared.measure(.fileRead, file: url) { try accessor(coordinatedURL) }
             }
         }
 
         if let coordinationError {
+            waiting.finish(.failure, error: coordinationError)
             throw coordinationError
         }
 
@@ -401,17 +425,21 @@ final class VaultFileService: VaultFileServing {
     }
 
     private func coordinatedWrite<T>(at url: URL, accessor: (URL) throws -> T) throws -> T {
+        let waiting = DebugLog.shared.begin(.coordinationWrite, file: url)
+        defer { waiting.finish(.abandonment) }
         let coordinator = NSFileCoordinator()
         var coordinationError: NSError?
         var result: Result<T, Error>?
 
         coordinator.coordinate(writingItemAt: url, options: .forMerging, error: &coordinationError) { coordinatedURL in
+            waiting.finish(.success)
             result = Result {
-                try accessor(coordinatedURL)
+                try DebugLog.shared.measure(.fileWrite, file: url) { try accessor(coordinatedURL) }
             }
         }
 
         if let coordinationError {
+            waiting.finish(.failure, error: coordinationError)
             throw coordinationError
         }
 

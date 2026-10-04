@@ -41,12 +41,21 @@ final class FlintMarkdownImageAttachment: NSTextAttachment {
 
 private enum FlintImageAttachmentRenderer {
     static func renderThumbnail(assetURL: URL?, altText: String, availableWidth: CGFloat) -> UIImage {
+        let preparation = DebugLog.shared.begin(.imagePrepare, file: assetURL)
+        defer { preparation.finish(.success) }
         if let assetURL,
-           let sourceImage = UIImage(contentsOfFile: assetURL.path) {
+           let sourceImage = loggedImage(at: assetURL) {
             return renderImageCard(image: sourceImage, altText: altText, availableWidth: availableWidth)
         }
 
         return renderPlaceholderCard(title: altText.isEmpty ? "Image unavailable" : altText, availableWidth: availableWidth)
+    }
+
+    private static func loggedImage(at url: URL) -> UIImage? {
+        let read = DebugLog.shared.begin(.imageRead, file: url)
+        let image = UIImage(contentsOfFile: url.path)
+        read.finish(image == nil ? .failure : .success)
+        return image
     }
 
     private static func renderImageCard(image: UIImage, altText: String, availableWidth: CGFloat) -> UIImage {

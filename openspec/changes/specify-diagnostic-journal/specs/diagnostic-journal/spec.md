@@ -37,3 +37,11 @@ The system SHALL save versioned debug logs in protected app storage on the iPhon
 - AND excess or oversized entries are skipped, with a limited counter recording the loss, instead of making the app wait
 - AND an incomplete entry does not prevent startup, and old/expired entries are removed first
 - AND a logging error does not trigger an endless stream of new log errors or crash the app
+
+### Requirement: Share a safe logging interface with recovery features
+The logger SHALL expose typed action/step identifiers, privacy-filtered error categories, and asynchronous snapshots of complete saved entries. Snapshot reads SHALL use only app-local storage and skip invalid or incomplete records. No API SHALL accept arbitrary log messages or document text.
+
+#### Scenario: A recovery feature needs logs while a provider is stuck
+- WHEN it asks the logger for saved entries
+- THEN the request runs on the log writer rather than a provider worker or screen-update thread
+- AND the result contains only valid versioned entries within the retention limits

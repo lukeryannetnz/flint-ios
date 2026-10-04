@@ -10,8 +10,10 @@ struct RootView: View {
                 LoadingScreenView()
             case .onboarding:
                 VaultOnboardingView(model: model)
+                    .onAppear { DebugLog.shared.observe(.firstUsableScreen) }
             case .ready:
                 VaultBrowserView(model: model)
+                    .onAppear { DebugLog.shared.observe(.firstUsableScreen) }
             }
         }
         .safeAreaInset(edge: .bottom) {

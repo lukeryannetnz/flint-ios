@@ -60,6 +60,8 @@ enum FlintRichTextCodec {
     private static let escapableMarkdownCharacters: Set<Character> = ["\\", "*", "_", "[", "]", "`"]
 
     static func attributedString(from markdown: String, noteURL: URL? = nil, vaultURL: URL? = nil) -> NSMutableAttributedString {
+        let formatting = DebugLog.shared.begin(.textFormat, file: noteURL)
+        defer { formatting.finish(.success) }
         let normalized = markdown.replacingOccurrences(of: "\r\n", with: "\n")
         let lines = normalized.components(separatedBy: "\n")
         var isInsideCodeFence = false
@@ -126,6 +128,8 @@ enum FlintRichTextCodec {
     }
 
     static func markdown(from attributedString: NSAttributedString) -> String {
+        let formatting = DebugLog.shared.begin(.textFormat)
+        defer { formatting.finish(.success) }
         let paragraphs = attributedString.string.components(separatedBy: "\n")
         guard !paragraphs.isEmpty else { return "" }
 

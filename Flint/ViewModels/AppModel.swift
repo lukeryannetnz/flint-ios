@@ -31,120 +31,144 @@ final class AppModel: ObservableObject {
     }
 
     func bootstrap() async {
-        guard !didBootstrap else { return }
-        didBootstrap = true
+        return await DebugLog.shared.measureAsync(.launch) {
+            guard !didBootstrap else { return }
+            didBootstrap = true
 
-        #if DEBUG
-        if ImageWorkflowTestSupport.active {
-            do {
-                let root = try ImageWorkflowTestSupport.prepare()
-                await openVault(at: root, persistSelection: false)
-                let name = ProcessInfo.processInfo.environment["FLINT_IMAGE_TEST_NOTE"] ?? "Existing.md"
-                if let note = notes.first(where: { $0.url.lastPathComponent == name }) {
-                    await openNote(note)
+            #if DEBUG
+            if ImageWorkflowTestSupport.active {
+                do {
+                    let root = try ImageWorkflowTestSupport.prepare()
+                    await openVault(at: root, persistSelection: false)
+                    let name = ProcessInfo.processInfo.environment["FLINT_IMAGE_TEST_NOTE"] ?? "Existing.md"
+                    if let note = notes.first(where: { $0.url.lastPathComponent == name }) {
+                        await openNote(note)
+                    }
+                } catch {
+                    DebugLog.shared.handledFailure(error)
+                    alertMessage = error.localizedDescription
+                    phase = .onboarding
                 }
-            } catch { alertMessage = error.localizedDescription; phase = .onboarding }
-            return
-        }
-        #endif
+                return
+            }
+            #endif
 
-        guard let bookmarkData = bookmarkStore.loadBookmarkData() else {
-            phase = .onboarding
-            return
-        }
+            guard let bookmarkData = bookmarkStore.loadBookmarkData() else {
+                phase = .onboarding
+                return
+            }
 
-        do {
-            let url = try bookmarkStore.resolveBookmarkData(bookmarkData)
-            await openVault(at: url, persistSelection: true)
-        } catch {
-            bookmarkStore.clearBookmarkData()
-            phase = .onboarding
-            alertMessage = "Your previous vault could not be reopened. Please select it again."
+            do {
+                let url = try bookmarkStore.resolveBookmarkData(bookmarkData)
+                await openVault(at: url, persistSelection: true)
+            } catch {
+                DebugLog.shared.handledFailure(error)
+                bookmarkStore.clearBookmarkData()
+                phase = .onboarding
+                alertMessage = "Your previous vault could not be reopened. Please select it again."
+            }
         }
     }
 
     func openVault(at url: URL, persistSelection: Bool = true) async {
-        isBusy = true
-        defer { isBusy = false }
+        return await DebugLog.shared.measureAsync(.vaultOpen, file: url) {
+            isBusy = true
+            defer { isBusy = false }
 
-        autosaveTask?.cancel()
-        autosaveTask = nil
-        stopAccessingCurrentVault()
-        clearCurrentNote()
+            autosaveTask?.cancel()
+            autosaveTask = nil
+            stopAccessingCurrentVault()
+            clearCurrentNote()
 
-        if url.startAccessingSecurityScopedResource() {
-            activeSecurityScopedURL = url
-        }
-
-        do {
-            if persistSelection {
-                let bookmarkData = try bookmarkStore.makeBookmark(for: url)
-                bookmarkStore.saveBookmarkData(bookmarkData)
+            let access = DebugLog.shared.begin(.securityScope, file: url)
+            let granted = url.startAccessingSecurityScopedResource()
+            access.finish(.success, count: granted ? 1 : 0)
+            if granted {
+                activeSecurityScopedURL = url
             }
 
-            activeVault = Vault(name: url.lastPathComponent, url: url)
-            phase = .ready
-            if let note = try reloadNotes() {
-                try loadNote(note)
+            do {
+                if persistSelection {
+                    let bookmarkData = try bookmarkStore.makeBookmark(for: url)
+                    bookmarkStore.saveBookmarkData(bookmarkData)
+                }
+
+                activeVault = Vault(name: url.lastPathComponent, url: url)
+                phase = .ready
+                if let note = try reloadNotes() {
+                    try loadNote(note)
+                }
+            } catch {
+                DebugLog.shared.handledFailure(error)
+                phase = .onboarding
+                activeVault = nil
+                notes = []
+                selectedNote = nil
+                noteText = ""
+                hasUnsavedChanges = false
+                alertMessage = error.localizedDescription
             }
-        } catch {
-            phase = .onboarding
-            activeVault = nil
-            notes = []
-            selectedNote = nil
-            noteText = ""
-            hasUnsavedChanges = false
-            alertMessage = error.localizedDescription
         }
     }
 
     func createVault(named name: String, in parentURL: URL) async {
-        isBusy = true
-        defer { isBusy = false }
+        return await DebugLog.shared.measureAsync(.vaultCreate, file: parentURL) {
+            isBusy = true
+            defer { isBusy = false }
 
-        let parentAccessStarted = parentURL.startAccessingSecurityScopedResource()
-        defer {
-            if parentAccessStarted {
-                parentURL.stopAccessingSecurityScopedResource()
+            let access = DebugLog.shared.begin(.securityScope, file: parentURL)
+            let parentAccessStarted = parentURL.startAccessingSecurityScopedResource()
+            access.finish(.success, count: parentAccessStarted ? 1 : 0)
+            defer {
+                if parentAccessStarted {
+                    DebugLog.shared.measure(.securityScopeRelease, file: parentURL) { parentURL.stopAccessingSecurityScopedResource() }
+                }
             }
-        }
 
-        do {
-            let vaultURL = try fileService.createVault(named: name, in: parentURL)
-            await openVault(at: vaultURL, persistSelection: true)
-        } catch {
-            alertMessage = error.localizedDescription
+            do {
+                let vaultURL = try fileService.createVault(named: name, in: parentURL)
+                await openVault(at: vaultURL, persistSelection: true)
+            } catch {
+                DebugLog.shared.handledFailure(error)
+                alertMessage = error.localizedDescription
+            }
         }
     }
 
     func openNote(_ note: NoteItem) async {
-        await saveCurrentNoteIfNeeded()
+        return await DebugLog.shared.measureAsync(.noteRead, file: note.url) {
+            await saveCurrentNoteIfNeeded()
 
-        do {
-            try loadNote(note)
-        } catch {
-            alertMessage = error.localizedDescription
+            do {
+                try loadNote(note)
+            } catch {
+                DebugLog.shared.handledFailure(error)
+                alertMessage = error.localizedDescription
+            }
         }
     }
 
     func createNote(named name: String, inFolderPath folderPathComponents: [String] = []) async {
-        guard let vaultURL = activeVault?.url else { return }
+        return await DebugLog.shared.measureAsync(.noteCreate) {
+            guard let vaultURL = activeVault?.url else { return }
 
-        isBusy = true
-        defer { isBusy = false }
+            isBusy = true
+            defer { isBusy = false }
 
-        do {
-            let targetDirectoryURL = folderPathComponents.reduce(vaultURL) { partialURL, component in
-                partialURL.appendingPathComponent(component, isDirectory: true)
+            do {
+                let targetDirectoryURL = folderPathComponents.reduce(vaultURL) { partialURL, component in
+                    partialURL.appendingPathComponent(component, isDirectory: true)
+                }
+                let noteURL = try fileService.createNote(named: name, in: targetDirectoryURL)
+                _ = try reloadNotes()
+
+                if let note = notes.first(where: { $0.url == noteURL }) {
+                    await openNote(note)
+                }
+            } catch {
+                DebugLog.shared.handledFailure(error)
+                alertMessage = error.localizedDescription
             }
-            let noteURL = try fileService.createNote(named: name, in: targetDirectoryURL)
-            _ = try reloadNotes()
-
-            if let note = notes.first(where: { $0.url == noteURL }) {
-                await openNote(note)
-            }
-        } catch {
-            alertMessage = error.localizedDescription
         }
     }
 
@@ -155,49 +179,58 @@ final class AppModel: ObservableObject {
     }
 
     func saveCurrentNoteIfNeeded() async {
-        guard hasUnsavedChanges, let selectedNote else { return }
-        autosaveTask?.cancel()
-        autosaveTask = nil
+        return await DebugLog.shared.measureAsync(.noteSave) {
+            guard hasUnsavedChanges, let selectedNote else { return }
+            autosaveTask?.cancel()
+            autosaveTask = nil
 
-        do {
-            try fileService.saveNote(noteText, at: selectedNote.url)
-            hasUnsavedChanges = false
-            if let note = try reloadNotes() {
-                try loadNote(note)
+            do {
+                try fileService.saveNote(noteText, at: selectedNote.url)
+                hasUnsavedChanges = false
+                if let note = try reloadNotes() {
+                    try loadNote(note)
+                }
+            } catch {
+                DebugLog.shared.handledFailure(error)
+                alertMessage = error.localizedDescription
             }
-        } catch {
-            alertMessage = error.localizedDescription
         }
     }
 
     func importImage(from sourceURL: URL, preferredFilename: String? = nil) async -> InsertedNoteImage? {
-        guard let selectedNote, let vaultURL = activeVault?.url else { return nil }
-        isBusy = true
-        defer { isBusy = false }
+        return await DebugLog.shared.measureAsync(.imageImport, file: sourceURL) {
+            guard let selectedNote, let vaultURL = activeVault?.url else { return nil }
+            isBusy = true
+            defer { isBusy = false }
 
-        do {
-            return try fileService.importImage(
-                from: sourceURL,
-                preferredFilename: preferredFilename,
-                into: selectedNote.url,
-                vaultURL: vaultURL
-            )
-        } catch {
-            alertMessage = error.localizedDescription
-            return nil
+            do {
+                return try fileService.importImage(
+                    from: sourceURL,
+                    preferredFilename: preferredFilename,
+                    into: selectedNote.url,
+                    vaultURL: vaultURL
+                )
+            } catch {
+                DebugLog.shared.handledFailure(error)
+                alertMessage = error.localizedDescription
+                return nil
+            }
         }
     }
 
     func importCameraImage(_ image: UIImage) async -> InsertedNoteImage? {
-        guard let selectedNote, let vaultURL = activeVault?.url else { return nil }
-        isBusy = true
-        defer { isBusy = false }
+        return await DebugLog.shared.measureAsync(.imageImport) {
+            guard let selectedNote, let vaultURL = activeVault?.url else { return nil }
+            isBusy = true
+            defer { isBusy = false }
 
-        do {
-            return try fileService.importCameraImage(image, into: selectedNote.url, vaultURL: vaultURL)
-        } catch {
-            alertMessage = error.localizedDescription
-            return nil
+            do {
+                return try fileService.importCameraImage(image, into: selectedNote.url, vaultURL: vaultURL)
+            } catch {
+                DebugLog.shared.handledFailure(error)
+                alertMessage = error.localizedDescription
+                return nil
+            }
         }
     }
 
@@ -246,7 +279,7 @@ final class AppModel: ObservableObject {
 
     private func stopAccessingCurrentVault() {
         if let activeSecurityScopedURL {
-            activeSecurityScopedURL.stopAccessingSecurityScopedResource()
+            DebugLog.shared.measure(.securityScopeRelease, file: activeSecurityScopedURL) { activeSecurityScopedURL.stopAccessingSecurityScopedResource() }
         }
 
         activeSecurityScopedURL = nil

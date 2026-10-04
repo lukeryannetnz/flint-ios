@@ -557,7 +557,11 @@ private struct NoteDocumentView: View {
     }
 
     private func copyImportedFileToTemporaryLocation(_ url: URL) -> ImportedImageSelection? {
+        let importAction = DebugLog.shared.begin(.imageImport, file: url)
+        defer { importAction.finish(.success) }
+        let access = DebugLog.shared.begin(.securityScope, file: url, parent: importAction.id)
         let didStartAccessing = url.startAccessingSecurityScopedResource()
+        access.finish(.success, count: didStartAccessing ? 1 : 0)
         defer {
             if didStartAccessing {
                 url.stopAccessingSecurityScopedResource()
@@ -572,12 +576,15 @@ private struct NoteDocumentView: View {
             if FileManager.default.fileExists(atPath: destinationURL.path) {
                 try FileManager.default.removeItem(at: destinationURL)
             }
-            try FileManager.default.copyItem(at: url, to: destinationURL)
+            try DebugLog.shared.measure(.fileRead, file: url) {
+                try FileManager.default.copyItem(at: url, to: destinationURL)
+            }
             return ImportedImageSelection(
                 url: destinationURL,
                 preferredFilename: url.deletingPathExtension().lastPathComponent
             )
         } catch {
+            importAction.finish(.failure, error: error)
             guard !didStartAccessing else {
                 return nil
             }
@@ -1752,7 +1759,7 @@ private struct ZoomableImageView: UIViewRepresentable {
         let imageView = UIImageView()
         imageView.contentMode = .scaleAspectFit
         imageView.clipsToBounds = true
-        imageView.image = UIImage(contentsOfFile: imageURL.path)
+        imageView.image = loadLoggedImage()
         imageView.frame = scrollView.bounds
         imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         scrollView.addSubview(imageView)
@@ -1761,9 +1768,16 @@ private struct ZoomableImageView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UIScrollView, context: Context) {
-        context.coordinator.imageView?.image = UIImage(contentsOfFile: imageURL.path)
+        context.coordinator.imageView?.image = loadLoggedImage()
         context.coordinator.imageView?.frame = uiView.bounds
         uiView.contentSize = uiView.bounds.size
+    }
+
+    private func loadLoggedImage() -> UIImage? {
+        let action = DebugLog.shared.begin(.imageRead, file: imageURL)
+        let image = UIImage(contentsOfFile: imageURL.path)
+        action.finish(image == nil ? .failure : .success)
+        return image
     }
 
     func makeCoordinator() -> Coordinator {
@@ -1830,7 +1844,9 @@ private struct PhotoLibraryImagePicker: UIViewControllerRepresentable {
                     if FileManager.default.fileExists(atPath: temporaryURL.path) {
                         try FileManager.default.removeItem(at: temporaryURL)
                     }
-                    try FileManager.default.copyItem(at: sourceURL, to: temporaryURL)
+                    try DebugLog.shared.measure(.imageImport, file: sourceURL) {
+                        try FileManager.default.copyItem(at: sourceURL, to: temporaryURL)
+                    }
                     DispatchQueue.main.async {
                         self.onPick(ImportedImageSelection(url: temporaryURL, preferredFilename: sourceURL.deletingPathExtension().lastPathComponent))
                     }
