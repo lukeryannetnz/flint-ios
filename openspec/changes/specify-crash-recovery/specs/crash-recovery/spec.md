@@ -1,45 +1,46 @@
-# crash-recovery Specification
+# Crash reports, restart recovery and sharing debug logs
 
 ## Purpose
 
-Define platform crash and hang evidence, interrupted-restoration recovery, and user-controlled local diagnostic export.
+Describe how Flint collects available crash and freeze information, avoids reopening the same failing vault automatically, and lets the user share debug logs.
 
-Status: planned; the associated change's unchecked tasks identify implementation and validation still required.
+Status: proposed behavior, not yet implemented. The task list records the work and testing still needed.
 
 ## ADDED Requirements
 
-### Requirement: Collect independent termination and responsiveness evidence
-The system SHALL collect available platform crash, hang, CPU and disk-write reports, preserving event windows and binary/build identity separately from receipt time. Missing or delayed reports SHALL be expected. Release symbol files SHALL be retained; an unclean launch marker SHALL NOT establish a crash or its cause.
+### Requirement: Collect crash reports and notice when the screen stops responding
+The system SHALL collect available platform reports for crashes, freezes, excessive CPU use and excessive disk writes. It SHALL keep the original event time range and app/build identity separate from when a report arrives. Missing or delayed reports SHALL be expected. Release debugging symbols SHALL be retained so crash addresses can be translated into useful code locations.
 
-#### Scenario: Evidence arrives after a hard termination
-- WHEN a platform report arrives on another launch
-- THEN sanitized reports are deduplicated and correlated only when timestamps and build evidence support it
-- AND unknown correlation and missing reports are explicit
-- AND no arbitrary Swift recovery is attempted in a native signal handler
-- AND device crash, watchdog and jetsam collection and matching-symbol procedures are documented
+#### Scenario: A report arrives after the app restarts
+- WHEN Apple delivers a report during a later launch
+- THEN private information is removed, duplicate reports are stored once, and the report is linked to a previous action only if its time and app build match
+- AND missing reports or uncertain links are stated explicitly
+- AND an unfinished launch record is not treated as proof of a crash or its cause
+- AND Flint does not try to continue normal Swift execution after a fatal native crash
+- AND the documentation explains how to collect device reports for crashes, iOS closing an unresponsive app, and iOS closing an app that uses too much memory
 
-#### Scenario: Foreground responsiveness stops
-- WHEN the main-thread heartbeat is delayed by at least two seconds
-- THEN an independent monitor records one suspected stall with active operation context and recovery duration when available
-- AND it excludes background suspension and bounds repeated events
-- AND a slow provider operation is observable without needing the main actor or blocked worker to run
+#### Scenario: The app stops responding while it is on screen
+- WHEN a regular check of the screen-update thread is delayed by at least two seconds
+- THEN a separate monitor records a suspected freeze, the actions in progress and how long the freeze lasted if the app recovers
+- AND it ignores time when the app is suspended in the background and limits repeated log entries
+- AND it can record slow file work even if the screen-update thread or file worker is stuck
 
-### Requirement: Recover before repeating an interrupted restoration
-The system SHALL durably mark automatic restoration before provider access and record completion or handled abandonment. An unfinished restoration SHALL show Retry, Choose another vault, and Export diagnostics before repeating provider access. Recovery SHALL preserve bookmarks and provider files.
+### Requirement: Offer recovery before repeating an interrupted launch
+The system SHALL save a record before automatically reopening a vault, then record completion or a handled cancellation/failure. If that record is unfinished, it SHALL show Retry, Choose another vault and Export diagnostics before accessing the folder again. Recovery SHALL preserve the saved folder reference and the user’s files.
 
-#### Scenario: Relaunch after interrupted provider access
-- WHEN the previous restoration marker is unfinished or a new safety marker cannot be persisted
-- THEN recovery appears before automatic restoration and describes an interrupted attempt without asserting a crash cause
-- AND the user can choose a different vault or export without reading the provider
-- AND explicit retry remains available, subject to bounded execution rules
+#### Scenario: Reopening the vault was interrupted
+- WHEN the previous attempt has no finish record, or a new start record cannot be safely saved
+- THEN Flint shows recovery before automatically reopening the vault and describes the interrupted attempt without asserting a crash cause
+- AND the user can choose another vault or export logs without reading the problem folder
+- AND the user can explicitly retry, subject to the limits on background file work
 
-### Requirement: Export only under user control
-The system SHALL offer a versioned, sanitized local diagnostic bundle from onboarding, recovery and ready state, with category/time-range preview, system sharing and clear-history controls. No telemetry SHALL upload automatically.
+### Requirement: Let the user choose whether to share debug information
+The system SHALL offer a versioned debug-information export from setup, recovery and the normal app screen. The user SHALL preview the kinds of information and time range, share through the system share sheet, and be able to clear saved history. No telemetry SHALL be uploaded automatically.
 
-#### Scenario: Export while provider access is stalled
-- WHEN the user exports diagnostics
-- THEN only app-local events, performance summaries, sanitized platform reports, previous-launch state, build, OS and device-model information are used
-- AND missing/dropped records, uncertain termination causes and collection limitations are stated
-- AND raw platform payloads and error dictionaries are not shared
-- AND export failure is recoverable, only one bounded 20 MiB temporary bundle exists, and it is cleaned after sharing/cancellation or next launch
-- AND clearing history resets retained evidence and IDs while preserving bookmarks, document-recovery copies and a minimal current safety marker
+#### Scenario: Share logs while Dropbox is stuck
+- WHEN the user chooses to export debug information
+- THEN the export uses only saved app-local logs, timing summaries, privacy-filtered platform reports, previous-launch status, app build, iOS version and device model
+- AND it states what reports/entries are missing, what was skipped and what remains unknown
+- AND raw platform reports or unrestricted error dictionaries are not shared
+- AND export errors are recoverable; only one temporary export of at most 20 MiB exists, and it is removed after sharing/cancellation or on the next launch
+- AND clearing history removes retained reports and resets identifiers while preserving vault references, recovered edits and the minimum record needed to avoid another failed automatic launch
