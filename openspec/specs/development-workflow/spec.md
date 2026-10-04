@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define repository-local OpenSpec workflow support for Codex contributors.
+Define repository-local OpenSpec workflow support and shared language for Flint contributors.
 
 ## Requirements
 
@@ -26,3 +26,17 @@ Installing repository-local skills SHALL preserve existing specifications, chang
 - GIVEN Flint already contains specifications and an in-progress change
 - WHEN official skills are installed
 - THEN those documents and the contributor's global tooling remain intact
+
+### Requirement: Shared domain language
+
+The repository SHALL define Flint's common terms in root `GLOSSARY.md` and explain their relationships in `docs/domain-model.md`. Reader-facing specifications and review descriptions SHALL use these terms consistently and explain unfamiliar technical terms where they are needed. Existing machine identifiers MAY remain unchanged.
+
+The glossary SHALL contain vocabulary rather than implementation contracts. The domain model SHALL define concepts and their relationships without listing implementation status or work in progress. Implementation plans and status SHALL remain in the relevant change documents.
+
+#### Scenario: Contributor describes logging and file availability
+
+- WHEN a contributor writes a specification or review description
+- THEN they use “debug log” for Flint's record of actions and errors
+- AND they distinguish a listed file from a file whose contents can be read
+- AND they use recovery for interrupted editing as well as failures while opening a vault or note
+- AND they can refer to the glossary and domain model for the shared meaning
