@@ -26,6 +26,8 @@ The system SHALL save and export only explicitly permitted log fields, limited l
 - WHEN Flint cannot read a preview or file details and uses a placeholder
 - THEN the log distinguishes that failure from successfully reading an empty file and records the step and safe error codes
 - AND it distinguishes missing files, unavailable downloads, permission failures, read/write coordination problems, invalid saved-folder references and unreadable images only when the evidence supports that conclusion
+- AND classification uses the failed step and explicit platform error evidence; a corrupt bookmark, failed coordination, and failed image decoding have distinct categories
+- AND explicit provider-unavailable and download-unavailable errors have distinct categories; an unrecognized error stays unknown
 - AND unknown download/provider state stays unknown; a path or iCloud-only status does not prove a Dropbox file is downloaded
 
 ### Requirement: Limit log storage and its effect on performance
@@ -35,6 +37,7 @@ The system SHALL save versioned debug logs in protected app storage on the iPhon
 - WHEN log writing falls behind or storage fails
 - THEN at most 512 entries wait to be written, each normal entry is at most 16 KiB, and each log-file segment is at most 256 KiB
 - AND excess or oversized entries are skipped, with a limited counter recording the loss, instead of making the app wait
+- AND accumulated loss counts remain pending until their counter entry is successfully saved, including across repeated storage failures
 - AND an incomplete entry does not prevent startup, and old/expired entries are removed first
 - AND a logging error does not trigger an endless stream of new log errors or crash the app
 

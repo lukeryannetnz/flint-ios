@@ -19,11 +19,11 @@ Each line has these fixed fields:
 | `actionID`, `parentActionID` | Link related steps without document names |
 | `fileID` | A keyed identifier that changes each launch; the URL is never saved |
 | `durationSeconds`, `count`, `bytes` | Optional duration, number of files/events, and bytes |
-| `errorCategory`, `errorCode` | Fixed error category and permitted Cocoa error codes; other errors are `unknown` |
+| `errorCategory`, `errorCode` | Fixed error category and permitted Cocoa error codes; step context distinguishes corrupt bookmarks, coordination and image failures. Explicit platform codes distinguish unavailable downloads from unavailable providers; other errors are `unknown` |
 
 `started` is followed by one final result: `success`, `failure`, `cancellation`, `timeout`, or `abandonment`. A timed-out/cancelled action that later finishes records one `finishedLater` observation. A hard process termination can leave only a start entry; that alone does not establish a crash cause. For `securityScope`, `count=1` means iOS started scoped access; `count=0` means it did not start, which does not by itself prove permission denial (app-owned files may not need it).
 
-`droppedEntries` counts events lost to queue or storage limits when the writer can next save them. Loss counters are in memory and can themselves be lost if the process exits.
+`droppedEntries` counts events lost to queue or storage limits when the writer can next save them. Accumulated counts are cleared only after the counter entry is successfully saved, so repeated storage failures preserve the count. Loss counters are in memory and can themselves be lost if the process exits.
 
 For example, entries with one parent action might show:
 

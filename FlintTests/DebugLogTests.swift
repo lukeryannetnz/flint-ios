@@ -1,4 +1,5 @@
 import XCTest
+import FileProvider
 @testable import Flint
 
 final class DebugLogTests: XCTestCase {
@@ -76,10 +77,56 @@ final class DebugLogTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(start), 2)
         queue.resume()
         let first = try entries(snapshot(log))
-        XCTAssertLessThanOrEqual(first.count, 512)
+        XCTAssertLessThanOrEqual(first.filter { $0.step != .droppedEntries }.count, 512)
+        XCTAssertEqual(first.filter { $0.step == .droppedEntries }.compactMap(\.count).reduce(0, +), 1488)
         log.observe(.memoryWarning)
         let all = try entries(snapshot(log))
         XCTAssertTrue(all.contains { $0.step == .droppedEntries && ($0.count ?? 0) > 0 })
+    }
+
+    func testDropCountSurvivesRepeatedStorageFailuresUntilRecovery() throws {
+        try Data("occupied".utf8).write(to: directory)
+        let queue = DispatchQueue(label: "test.failed-log")
+        queue.suspend()
+        let log = DebugLog(directory: directory, queue: queue)
+        for _ in 0..<1000 { log.observe(.memoryWarning) }
+        queue.resume()
+        XCTAssertTrue(snapshot(log).isEmpty)
+        log.observe(.noteRead)
+        XCTAssertTrue(snapshot(log).isEmpty)
+        try FileManager.default.removeItem(at: directory)
+        log.observe(.noteSave)
+        let records = try entries(snapshot(log))
+        XCTAssertEqual(records.filter { $0.step == .droppedEntries }.compactMap(\.count).reduce(0, +), 2002)
+        log.observe(.noteRead)
+        XCTAssertEqual(try entries(snapshot(log)).filter { $0.step == .droppedEntries }.compactMap(\.count).reduce(0, +), 2002)
+    }
+
+    func testFailureCategoriesUseContextWithoutExposingPrivateErrors() throws {
+        let log = DebugLog(directory: directory)
+        let secret = "/Dropbox/private-note account@example.com password-secret"
+        let corrupt = NSError(domain: NSCocoaErrorDomain, code: NSFileReadCorruptFileError,
+            userInfo: [NSLocalizedDescriptionKey: secret])
+        log.begin(.bookmarkResolve).finish(.failure, error: corrupt)
+        log.begin(.preview).finish(.failure, error: corrupt)
+        log.begin(.coordinationRead).finish(.failure, error: NSError(domain: secret, code: 123))
+        log.begin(.imageRead).finish(.failure)
+        log.begin(.imageRead).finish(.failure, error: CocoaError(.fileReadNoSuchFile))
+        log.begin(.fileRead).finish(.failure, error: NSError(domain: NSCocoaErrorDomain,
+            code: NSUbiquitousFileUnavailableError, userInfo: [NSLocalizedDescriptionKey: secret]))
+        log.begin(.fileRead).finish(.failure, error: NSError(domain: NSFileProviderErrorDomain,
+            code: NSFileProviderError.Code.serverUnreachable.rawValue, userInfo: [NSLocalizedDescriptionKey: secret]))
+        log.begin(.fileRead).finish(.failure, error: corrupt)
+        log.begin(.bookmarkResolve).finish(.failure, error: NSError(domain: secret, code: 999))
+        let data = snapshot(log)
+        let failures = try entries(data).filter { $0.result == .failure }
+        XCTAssertEqual(failures.compactMap(\.errorCategory), [.invalidBookmark, .invalidText, .coordination,
+            .unreadableImage, .missingFile, .unavailableDownload, .providerUnavailable, .unknown, .unknown])
+        XCTAssertNil(failures.last?.errorCode)
+        let text = String(decoding: data, as: UTF8.self)
+        for sensitive in ["Dropbox", "private-note", "account@", "password-secret", secret] {
+            XCTAssertFalse(text.contains(sensitive))
+        }
     }
 
     func testStorageFailureDoesNotThrowIntoApplication() {

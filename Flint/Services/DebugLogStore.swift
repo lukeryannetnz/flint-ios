@@ -91,13 +91,11 @@ final class DebugLogStore {
         let safeFile = entry.fileID.map { value in
             value.count == 24 && value.allSatisfy { "0123456789abcdef".contains($0) }
         } ?? true
-        let allowedCodes = [NSFileReadNoSuchFileError, NSFileNoSuchFileError,
-                            NSFileReadNoPermissionError, NSFileWriteNoPermissionError, NSFileReadCorruptFileError]
         return ["info", "error"].contains(entry.severity) && safeIdentity(entry.appVersion)
             && safeIdentity(entry.build) && safeFile && entry.elapsedSeconds.isFinite && entry.elapsedSeconds >= 0
             && (entry.durationSeconds.map { $0.isFinite && $0 >= 0 } ?? true)
             && (entry.count.map { $0 >= 0 } ?? true) && (entry.bytes.map { $0 >= 0 } ?? true)
-            && (entry.errorCode.map { allowedCodes.contains($0) } ?? true)
+            && (entry.errorCode.map { DebugLogError.permittedCodes.contains($0) } ?? true)
     }
 
     private func remove(_ url: URL) throws {

@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import FileProvider
 import os
 
 /// Fixed vocabulary: callers cannot accidentally submit document text or error descriptions.
@@ -13,23 +14,50 @@ enum DebugLogResult: String, Codable {
     case started, success, failure, cancellation, timeout, abandonment, finishedLater, observation
 }
 enum DebugLogError: String, Codable {
-    case missingFile, permission, invalidBookmark, invalidText, coordination, unreadableImage, unknown
+    case missingFile, permission, invalidBookmark, invalidText, coordination, unreadableImage
+    case providerUnavailable, unavailableDownload, unknown
 
-    static func classify(_ error: Error) -> (DebugLogError, Int?) {
-        if let error = error as? VaultError {
-            if error == .noteMissing { return (.missingFile, nil) }
-            return (.unknown, nil)
+    static let permittedCodes = [NSFileReadNoSuchFileError, NSFileNoSuchFileError,
+        NSFileReadNoPermissionError, NSFileWriteNoPermissionError, NSFileReadCorruptFileError,
+        NSUbiquitousFileUnavailableError]
+
+    static func classify(_ error: Error?, step: DebugLogStep) -> (DebugLogError, Int?) {
+        if let error = error as? VaultError, error == .noteMissing { return (.missingFile, nil) }
+        if let error {
+            let e = error as NSError
+            if e.domain == NSCocoaErrorDomain {
+                switch e.code {
+                case NSFileReadNoSuchFileError, NSFileNoSuchFileError: return (.missingFile, e.code)
+                case NSFileReadNoPermissionError, NSFileWriteNoPermissionError: return (.permission, e.code)
+                case NSUbiquitousFileUnavailableError: return (.unavailableDownload, e.code)
+                case NSFileReadCorruptFileError:
+                    switch step {
+                    case .bookmarkResolve: return (.invalidBookmark, e.code)
+                    case .coordinationRead, .coordinationWrite: return (.coordination, e.code)
+                    case .imageRead, .imagePrepare, .imageEncode, .imageImport: return (.unreadableImage, e.code)
+                    case .preview, .noteRead: return (.invalidText, e.code)
+                    default: return (.unknown, e.code)
+                    }
+                default: break
+                }
+            }
+            if e.domain == NSFileProviderErrorDomain {
+                switch e.code {
+                case NSFileProviderError.Code.serverUnreachable.rawValue: return (.providerUnavailable, nil)
+                case NSFileProviderError.Code.noSuchItem.rawValue: return (.missingFile, nil)
+                case NSFileProviderError.Code.notAuthenticated.rawValue: return (.permission, nil)
+                default: break
+                }
+            }
         }
-        let e = error as NSError
-        guard e.domain == NSCocoaErrorDomain else { return (.unknown, nil) }
-        switch e.code {
-        case NSFileReadNoSuchFileError, NSFileNoSuchFileError: return (.missingFile, e.code)
-        case NSFileReadNoPermissionError, NSFileWriteNoPermissionError: return (.permission, e.code)
-        case NSFileReadCorruptFileError: return (.invalidText, e.code)
+        switch step {
+        case .coordinationRead, .coordinationWrite: return (.coordination, nil)
+        case .imageRead, .imagePrepare, .imageEncode: return (.unreadableImage, nil)
         default: return (.unknown, nil)
         }
     }
 }
+
 struct DebugLogEntry: Codable {
     let schemaVersion: Int
     let timestamp: Date
@@ -137,7 +165,8 @@ final class DebugLog {
 
     fileprivate func record(_ action: DebugLogAction, result: DebugLogResult, error: Error? = nil,
                             count: Int? = nil, bytes: Int? = nil) {
-        let classified = error.map(DebugLogError.classify)
+        let classified = (error != nil || result == .failure)
+            ? DebugLogError.classify(error, step: action.step) : nil
         let now = ProcessInfo.processInfo.systemUptime
         let entry = DebugLogEntry(schemaVersion: 1, timestamp: Date(), elapsedSeconds: now - origin,
             severity: result == .failure || result == .timeout ? "error" : "info",
@@ -149,14 +178,13 @@ final class DebugLog {
         lock.lock()
         guard pending < 512 else { lost = min(lost + 1, Int.max - 1); lock.unlock(); return }
         pending += 1
-        let dropped = lost
-        lost = 0
         lock.unlock()
         queue.async { [self] in
             defer { lock.lock(); pending -= 1; lock.unlock() }
             os_log("%{public}s %{public}s %{public}s", log: appleLog, type: entry.severity == "error" ? .error : .info,
                    entry.step.rawValue, entry.result.rawValue, entry.actionID.uuidString)
             do {
+                lock.lock(); let dropped = lost; lock.unlock()
                 if dropped > 0 {
                     let counter = DebugLogEntry(schemaVersion: 1, timestamp: entry.timestamp,
                         elapsedSeconds: entry.elapsedSeconds, severity: "info", step: .droppedEntries,
@@ -164,6 +192,8 @@ final class DebugLog {
                         actionID: UUID(), parentActionID: nil, fileID: nil, durationSeconds: nil,
                         count: dropped, bytes: nil, errorCategory: nil, errorCode: nil)
                     try store.append(counter)
+                    // New losses may arrive while writing. Remove only the persisted count.
+                    lock.lock(); lost -= dropped; lock.unlock()
                 }
                 try store.append(entry)
             } catch {
