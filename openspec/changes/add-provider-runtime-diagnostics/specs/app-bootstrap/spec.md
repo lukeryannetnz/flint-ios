@@ -62,17 +62,17 @@ The system SHALL discard a stored bookmark only when resolution proves it invali
 
 ### Requirement: Single active security-scoped vault
 
-The system SHALL maintain one UI-active vault while retaining security-scoped access leases for any previous worker that has not actually stopped. Cancellation SHALL release an access lease only after the last operation using it finishes.
+The system SHALL retain one UI-active vault scope and independent worker-owned scope leases. Switching releases the UI lease only after dirty text is saved; cancelled or timed-out workers retain their source and destination leases until actual completion.
 
 #### Scenario: Open a different vault
 
 - GIVEN a vault is currently open
 - WHEN the user opens another vault
-- THEN unsaved edits are persisted or explicitly retained/discarded before editor state changes
-- AND any queued obsolete autosave task is cancelled
-- AND operations already running retain access to their original vault until completion
+- THEN dirty text is saved before editor state changes, or navigation stays at the original destination
+- AND any pending autosave task is cancelled
+- AND the UI releases its previous scope while any draining worker retains its own balanced lease
 - AND no obsolete operation can publish state into the new vault
-- AND access to the previous vault is stopped once its remaining workers finish
+- AND explicit retain/discard choices and document recovery remain planned for phase 4
 
 ### Requirement: Surface user-facing failures
 
@@ -86,3 +86,18 @@ The system SHALL present ordinary operational failures through a dismissible ale
 - AND failed new-vault state is cleared without discarding unresolved edits from a previous vault
 - AND the app shows a user-facing error message and recovery actions
 - AND sanitized diagnostics retain the failed stage and error category
+
+### Requirement: Bound asynchronous bootstrap setup
+
+Bookmark resolution, creation and security-scope acquisition SHALL run on the bounded provider executor. Automatic restoration SHALL use one foreground-active attempt deadline, expose current stage and cancellation, and preserve bookmarks on temporary provider errors, cancellation and timeout. Only evidence of an invalid bookmark SHALL clear its saved data.
+
+#### Scenario: User leaves a cancelled restoration
+
+- WHEN the user chooses another vault while old work drains
+- THEN a new vault uses the remaining worker slot when available
+- AND old completion cannot replace new presentation or saved selection
+
+#### Scenario: Choosing another vault overlaps safety storage
+
+- WHEN choosing another vault awaits an app-local abandonment write and a newer vault opens meanwhile
+- THEN completion of the old safety write cannot replace the newer vault screen with onboarding

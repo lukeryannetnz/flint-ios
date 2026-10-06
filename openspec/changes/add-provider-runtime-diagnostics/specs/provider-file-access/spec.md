@@ -163,3 +163,35 @@ The implementation SHALL include deterministic tests with controllable blocking 
 - AND taps and scrolling remain responsive during delayed I/O
 - AND memory and concurrency stay within the stated budgets
 - AND saved markdown and referenced assets remain intact after failure, retry, and relaunch
+
+### Requirement: Carry explicit asynchronous request identity
+
+Vault-file methods SHALL accept a request carrying vault-root identity, foreground deadline, priority and attempt identity, and SHALL return asynchronously with a value or typed cancellation/timeout/capacity failure. Bookmark resolution and creation SHALL use the same bounded executor. A loading attempt SHALL share a single 30-second foreground budget across setup, discovery and initial content; starting another stage SHALL not reset it.
+
+#### Scenario: Late setup completion
+
+- WHEN bookmark or scope acquisition finishes after its attempt was cancelled or timed out
+- THEN no later provider stage is dispatched for that attempt
+- AND no bookmark, vault, selection, busy state or alert belonging to a newer attempt is replaced
+
+### Requirement: Keep uncertain mutations separate from retries
+
+The executor SHALL retain an actual mutation outcome for the owning attempt after logical timeout or cancellation. A retry SHALL first establish whether the original write/create finished, without issuing another mutation while it drains. Saves SHALL snapshot their original text, destination and revision; an asynchronous completion SHALL not clear newer edits. Navigation SHALL first save dirty text and remain at its original destination if saving cannot be established. Explicit retain/discard recovery storage is added in phase 4.
+
+#### Scenario: Creation finishes after its deadline
+
+- WHEN the user retries a timed-out creation
+- THEN pending work is described as still stopping
+- AND actual success opens the already-created result rather than creating a duplicate
+- AND only actual failure or a request that never started permits a new create attempt
+
+### Requirement: Keep recovery actions usable during blocked file access
+
+Loading SHALL publish current stage and a slow indicator, allow cancellation, and transition to recovery independently of blocked workers. Recovery SHALL support retry, choosing another vault, and exporting sanitized app-local evidence. A minimal bounded sharing action SHALL be available in phase 3; category/time-range preview and clear-history controls are added in phase 6.
+
+#### Scenario: Provider workers are both occupied
+
+- WHEN a new explicit attempt cannot acquire bounded capacity
+- THEN the UI reports busy recovery immediately
+- AND it creates no extra provider threads or unbounded queued retries
+- AND local diagnostic sharing remains available

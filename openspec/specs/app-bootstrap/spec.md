@@ -44,26 +44,29 @@ The system SHALL attempt to reopen the previously selected vault from persisted 
 
 ### Requirement: Recover from stale or invalid bookmark data
 
-The system SHALL discard an unusable stored bookmark and require the user to choose a vault again.
+The system SHALL discard a stored bookmark only when resolution proves it invalid or unusable; temporary provider unavailability, cancellation, or timeout SHALL preserve it for retry.
 
 #### Scenario: Stored bookmark cannot be resolved
 
 - GIVEN a persisted vault bookmark exists
-- WHEN bookmark resolution fails
+- WHEN bookmark resolution establishes that the bookmark is invalid or unusable
 - THEN the stored bookmark is cleared
 - AND the app transitions to onboarding
 - AND the app shows an alert explaining that the previous vault must be selected again
 
 ### Requirement: Single active security-scoped vault
 
-The system SHALL release security-scoped access for the previous vault before switching to another vault.
+The system SHALL retain one UI-active vault scope and independent worker-owned scope leases. Switching releases the UI lease only after dirty text is saved; cancelled or timed-out workers retain their source and destination leases until actual completion.
 
 #### Scenario: Open a different vault
 
 - GIVEN a vault is currently open
 - WHEN the user opens another vault
-- THEN any pending autosave task is cancelled
-- AND security-scoped access to the previous vault is stopped before the new vault becomes active
+- THEN dirty text is saved before editor state changes, or navigation stays at the original destination
+- AND any pending autosave task is cancelled
+- AND the UI releases its previous scope while any draining worker retains its own balanced lease
+- AND no obsolete operation can publish state into the new vault
+- AND explicit retain/discard choices and document recovery remain planned for phase 4
 
 ### Requirement: Surface user-facing failures
 
@@ -88,3 +91,18 @@ Successful restoration SHALL commit completion; handled restoration failure SHAL
 - THEN recovery is shown without resolving or deleting the saved bookmark
 - AND explicit retry can reopen the saved selection
 - AND choosing another vault shows onboarding while preserving the bookmark
+
+### Requirement: Bound asynchronous bootstrap setup
+
+Bookmark resolution, creation and security-scope acquisition SHALL run on the bounded provider executor. Automatic restoration SHALL use one foreground-active attempt deadline, expose current stage and cancellation, and preserve bookmarks on temporary provider errors, cancellation and timeout. Only evidence of an invalid bookmark SHALL clear its saved data.
+
+#### Scenario: User leaves a cancelled restoration
+
+- WHEN the user chooses another vault while old work drains
+- THEN a new vault uses the remaining worker slot when available
+- AND old completion cannot replace new presentation or saved selection
+
+#### Scenario: Choosing another vault overlaps safety storage
+
+- WHEN choosing another vault awaits an app-local abandonment write and a newer vault opens meanwhile
+- THEN completion of the old safety write cannot replace the newer vault screen with onboarding

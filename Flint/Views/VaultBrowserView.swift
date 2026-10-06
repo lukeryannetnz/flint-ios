@@ -68,10 +68,15 @@ struct VaultBrowserView: View {
             }
             .overlay {
                 if model.isBusy {
-                    ProgressView()
-                        .controlSize(.large)
-                        .padding()
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    VStack(spacing: 12) {
+                        ProgressView().controlSize(.large)
+                        if model.isNoteLoading {
+                            Text("Loading note…")
+                            Button("Cancel note loading") { model.cancelNoteLoading() }
+                        }
+                    }
+                    .padding()
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
             }
     }
@@ -218,7 +223,8 @@ struct VaultBrowserView: View {
     }
 
     private func handleSelectedNoteURLChange(_ newValue: URL?) {
-        guard let newValue, let note = model.notes.first(where: { $0.url == newValue }) else { return }
+        guard let newValue, newValue != model.selectedNote?.url,
+              let note = model.notes.first(where: { $0.url == newValue }) else { return }
 
         Task {
             await model.openNote(note)

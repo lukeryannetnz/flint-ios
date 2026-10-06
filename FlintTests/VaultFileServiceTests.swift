@@ -31,9 +31,9 @@ final class VaultFileServiceTests: XCTestCase {
 
     @MainActor
     private func verifyPersistedImage(camera: Bool) async throws {
-        let vault = try service.createVault(named: "Portable", in: temporaryDirectoryURL)
-        let noteURL = try service.createNote(named: "Editable", in: vault)
-        try service.saveNote("Before\nAfter", at: noteURL)
+        let vault = try await service.createVault(named: "Portable", in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        let noteURL = try await service.createNote(named: "Editable", in: vault, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        try await service.saveNote("Before\nAfter", at: noteURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         let image = UIGraphicsImageRenderer(size: CGSize(width: 240, height: 160)).image { context in
             UIColor.orange.setFill()
             context.fill(CGRect(x: 0, y: 0, width: 240, height: 160))
@@ -72,8 +72,8 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertFalse(reopened.noteText.contains("file://"))
     }
 
-    func testCreateVaultCreatesNamedDirectory() throws {
-        let vaultURL = try service.createVault(named: "My Vault", in: temporaryDirectoryURL)
+    func testCreateVaultCreatesNamedDirectory() async throws {
+        let vaultURL = try await service.createVault(named: "My Vault", in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
 
         var isDirectory: ObjCBool = false
         XCTAssertTrue(FileManager.default.fileExists(atPath: vaultURL.path, isDirectory: &isDirectory))
@@ -81,61 +81,66 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertEqual(vaultURL.lastPathComponent, "My Vault")
     }
 
-    func testCreateListReadAndSaveMarkdownNotes() throws {
-        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
-        let noteURL = try service.createNote(named: "Daily Note", in: vaultURL)
+    func testCreateListReadAndSaveMarkdownNotes() async throws {
+        let vaultURL = try await service.createVault(named: "Vault", in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        let noteURL = try await service.createNote(named: "Daily Note", in: vaultURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
 
         XCTAssertEqual(noteURL.lastPathComponent, "Daily Note.md")
-        XCTAssertEqual(try service.readNote(at: noteURL), "")
+        let awaitedResult1 = try await service.readNote(at: noteURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        XCTAssertEqual(awaitedResult1, "")
 
-        try service.saveNote("# Daily Note\nUpdated body", at: noteURL)
+        try await service.saveNote("# Daily Note\nUpdated body", at: noteURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
 
-        let notes = try service.listMarkdownNotes(in: vaultURL)
+        let notes = try await service.listMarkdownNotes(in: vaultURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         XCTAssertEqual(notes.map(\.relativePath), ["Daily Note.md"])
         XCTAssertEqual(notes.first?.folderPath, "")
         XCTAssertEqual(notes.first?.folderName, "Vault")
         XCTAssertEqual(notes.first?.previewMarkdown, "Updated body")
-        XCTAssertEqual(try service.readNote(at: noteURL), "# Daily Note\nUpdated body")
+        let awaitedResult2 = try await service.readNote(at: noteURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        XCTAssertEqual(awaitedResult2, "# Daily Note\nUpdated body")
     }
 
-    func testCreateNoteAllowsSameNameInAnotherFolder() throws {
-        let vault = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+    func testCreateNoteAllowsSameNameInAnotherFolder() async throws {
+        let vault = try await service.createVault(named: "Vault", in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         let folder = vault.appendingPathComponent("Projects", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
-        _ = try service.createNote(named: "Daily", in: vault)
-        let nested = try service.createNote(named: "Daily", in: folder)
+        _ = try await service.createNote(named: "Daily", in: vault, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        let nested = try await service.createNote(named: "Daily", in: folder, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         XCTAssertEqual(nested, folder.appendingPathComponent("Daily.md"))
-        XCTAssertEqual(Set(try service.listMarkdownNotes(in: vault).map(\.relativePath)), ["Daily.md", "Projects/Daily.md"])
+        let awaitedResult3 = try await service.listMarkdownNotes(in: vault, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        XCTAssertEqual(Set(awaitedResult3.map(\.relativePath)), ["Daily.md", "Projects/Daily.md"])
     }
 
-    func testCreateNoteInSubfolder() throws {
-        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+    func testCreateNoteInSubfolder() async throws {
+        let vaultURL = try await service.createVault(named: "Vault", in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         let projectsURL = vaultURL.appendingPathComponent("Projects", isDirectory: true)
         try FileManager.default.createDirectory(at: projectsURL, withIntermediateDirectories: false)
 
-        let noteURL = try service.createNote(named: "Roadmap", in: projectsURL)
-        let notes = try service.listMarkdownNotes(in: vaultURL)
+        let noteURL = try await service.createNote(named: "Roadmap", in: projectsURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        let notes = try await service.listMarkdownNotes(in: vaultURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
 
         XCTAssertEqual(noteURL.lastPathComponent, "Roadmap.md")
         XCTAssertEqual(notes.map(\.relativePath), ["Projects/Roadmap.md"])
         XCTAssertEqual(notes.first?.folderPath, "Projects")
-        XCTAssertEqual(try service.readNote(at: noteURL), "")
+        let awaitedResult4 = try await service.readNote(at: noteURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        XCTAssertEqual(awaitedResult4, "")
     }
 
-    func testCreateNoteRejectsDuplicateNameInSubfolder() throws {
-        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+    func testCreateNoteRejectsDuplicateNameInSubfolder() async throws {
+        let vaultURL = try await service.createVault(named: "Vault", in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         let projectsURL = vaultURL.appendingPathComponent("Projects", isDirectory: true)
         try FileManager.default.createDirectory(at: projectsURL, withIntermediateDirectories: false)
 
-        _ = try service.createNote(named: "Roadmap", in: projectsURL)
+        _ = try await service.createNote(named: "Roadmap", in: projectsURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
 
-        XCTAssertThrowsError(try service.createNote(named: "Roadmap", in: projectsURL)) { error in
-            XCTAssertEqual(error as? VaultError, .itemAlreadyExists("Roadmap.md"))
-        }
+        do {
+            _ = try await service.createNote(named: "Roadmap", in: projectsURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+            XCTFail("Expected duplicate rejection")
+        } catch { XCTAssertEqual(error as? VaultError, .itemAlreadyExists("Roadmap.md")) }
     }
 
-    func testListMarkdownNotesCapturesFolderPreviewAndDates() throws {
-        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+    func testListMarkdownNotesCapturesFolderPreviewAndDates() async throws {
+        let vaultURL = try await service.createVault(named: "Vault", in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         let projectFolderURL = vaultURL.appendingPathComponent("Projects", isDirectory: true)
         try FileManager.default.createDirectory(at: projectFolderURL, withIntermediateDirectories: true)
 
@@ -152,7 +157,7 @@ final class VaultFileServiceTests: XCTestCase {
         try FileManager.default.setAttributes([.creationDate: olderCreationDate, .modificationDate: olderModifiedDate], ofItemAtPath: olderNoteURL.path)
         try FileManager.default.setAttributes([.creationDate: newerCreationDate, .modificationDate: newerModifiedDate], ofItemAtPath: newerNoteURL.path)
 
-        let notes = try service.listMarkdownNotes(in: vaultURL)
+        let notes = try await service.listMarkdownNotes(in: vaultURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
 
         XCTAssertEqual(notes.map(\.title), ["Beta", "Alpha"])
         XCTAssertEqual(notes.first?.folderPath, "Projects")
@@ -162,8 +167,8 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertEqual(notes.first?.lastModifiedAt, newerModifiedDate)
     }
 
-    func testListMarkdownNotesBuildsMarkdownAwarePreviewExcerpt() throws {
-        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+    func testListMarkdownNotesBuildsMarkdownAwarePreviewExcerpt() async throws {
+        let vaultURL = try await service.createVault(named: "Vault", in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         let noteURL = vaultURL.appendingPathComponent("Daily.md")
 
         try """
@@ -176,7 +181,7 @@ final class VaultFileServiceTests: XCTestCase {
         > Quoted thought
         """.write(to: noteURL, atomically: true, encoding: .utf8)
 
-        let notes = try service.listMarkdownNotes(in: vaultURL)
+        let notes = try await service.listMarkdownNotes(in: vaultURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
 
         XCTAssertEqual(
             notes.first?.previewMarkdown,
@@ -189,8 +194,8 @@ final class VaultFileServiceTests: XCTestCase {
         )
     }
 
-    func testListMarkdownNotesDoesNotMisreadUncheckedTaskContentAsChecked() throws {
-        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+    func testListMarkdownNotesDoesNotMisreadUncheckedTaskContentAsChecked() async throws {
+        let vaultURL = try await service.createVault(named: "Vault", in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         let noteURL = vaultURL.appendingPathComponent("Tasks.md")
 
         try """
@@ -199,13 +204,13 @@ final class VaultFileServiceTests: XCTestCase {
         - [ ] mention [x] syntax
         """.write(to: noteURL, atomically: true, encoding: .utf8)
 
-        let notes = try service.listMarkdownNotes(in: vaultURL)
+        let notes = try await service.listMarkdownNotes(in: vaultURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
 
         XCTAssertEqual(notes.first?.previewMarkdown, "○ mention [x] syntax")
     }
 
-    func testResolveImageURLSupportsVaultRootedAndRelativePathsWithinVault() throws {
-        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+    func testResolveImageURLSupportsVaultRootedAndRelativePathsWithinVault() async throws {
+        let vaultURL = try await service.createVault(named: "Vault", in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         let noteURL = vaultURL.appendingPathComponent("Notes/Daily.md")
 
         let rootResolved = VaultFileService.resolveImageURL(
@@ -223,8 +228,8 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertNil(relativeResolved)
     }
 
-    func testResolveImageURLRejectsSymlinkEscapingVault() throws {
-        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+    func testResolveImageURLRejectsSymlinkEscapingVault() async throws {
+        let vaultURL = try await service.createVault(named: "Vault", in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         let noteFolderURL = vaultURL.appendingPathComponent("Notes", isDirectory: true)
         try FileManager.default.createDirectory(at: noteFolderURL, withIntermediateDirectories: true)
         let noteURL = noteFolderURL.appendingPathComponent("Daily.md")
@@ -245,15 +250,15 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertNil(resolved)
     }
 
-    func testImportCameraImageCreatesManagedJPEGReference() throws {
-        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
-        let noteURL = try service.createNote(named: "Daily", in: vaultURL)
+    func testImportCameraImageCreatesManagedJPEGReference() async throws {
+        let vaultURL = try await service.createVault(named: "Vault", in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        let noteURL = try await service.createNote(named: "Daily", in: vaultURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         let image = UIGraphicsImageRenderer(size: CGSize(width: 24, height: 24)).image { context in
             UIColor.systemBlue.setFill()
             context.fill(CGRect(x: 0, y: 0, width: 24, height: 24))
         }
 
-        let inserted = try service.importCameraImage(image, into: noteURL, vaultURL: vaultURL)
+        let inserted = try await service.importCameraImage(image, into: noteURL, vaultURL: vaultURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: inserted.assetURL.path))
         XCTAssertEqual(inserted.assetURL.pathExtension.lowercased(), "jpg")
@@ -261,8 +266,8 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertTrue(inserted.markdownSource.contains("Daily Assets/"))
     }
 
-    func testImportImagePreservesReadableSourceFormatAndCreatesRelativeMarkdownReference() throws {
-        let vaultURL = try service.createVault(named: "Vault", in: temporaryDirectoryURL)
+    func testImportImagePreservesReadableSourceFormatAndCreatesRelativeMarkdownReference() async throws {
+        let vaultURL = try await service.createVault(named: "Vault", in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         let noteFolderURL = vaultURL.appendingPathComponent("Notes", isDirectory: true)
         try FileManager.default.createDirectory(at: noteFolderURL, withIntermediateDirectories: true)
         let noteURL = noteFolderURL.appendingPathComponent("Daily.md")
@@ -271,7 +276,7 @@ final class VaultFileServiceTests: XCTestCase {
         let sourceURL = temporaryDirectoryURL.appendingPathComponent("diagram.heic")
         try Data("heic".utf8).write(to: sourceURL)
 
-        let inserted = try service.importImage(from: sourceURL, preferredFilename: "System Diagram", into: noteURL, vaultURL: vaultURL)
+        let inserted = try await service.importImage(from: sourceURL, preferredFilename: "System Diagram", into: noteURL, vaultURL: vaultURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: inserted.assetURL.path))
         XCTAssertEqual(inserted.assetURL.pathExtension.lowercased(), "heic")

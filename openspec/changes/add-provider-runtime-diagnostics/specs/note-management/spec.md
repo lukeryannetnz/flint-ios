@@ -43,3 +43,13 @@ Note-list refresh SHALL update metadata without launching background navigation 
 - THEN no note is selected
 - AND editor text is cleared
 - AND unsaved state is cleared
+
+### Requirement: Programmatic selection does not request navigation
+
+When the browser synchronizes its selection with the model, it SHALL not issue another note read for that same selected URL. Only a different user-requested URL SHALL start navigation; synchronization SHALL not cancel a newer pending read or restore an older selection.
+
+#### Scenario: Initial read overlaps browser appearance
+
+- WHEN the model publishes an initial selection while another explicit note read is pending
+- THEN browser appearance and selection synchronization do not reread the previous note
+- AND the explicit read retains its generation unless the user changes selection
