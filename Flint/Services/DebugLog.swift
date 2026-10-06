@@ -9,6 +9,7 @@ enum DebugLogStep: String, Codable {
     case vaultOpen, vaultCreate, enumeration, metadata, preview, noteCreate, noteRead, noteSave
     case coordinationRead, coordinationWrite, fileRead, fileWrite, imageRead, imagePrepare
     case imageImport, imageEncode, textFormat, firstUsableScreen, memoryWarning, droppedEntries
+    case slowOperation, suspectedStall, responsivenessRecovered, restoration, platformEvidence
 }
 enum DebugLogResult: String, Codable {
     case started, success, failure, cancellation, timeout, abandonment, finishedLater, observation
@@ -76,6 +77,8 @@ struct DebugLogEntry: Codable {
     let bytes: Int?
     let errorCategory: DebugLogError?
     let errorCode: Int?
+    var observedStep: DebugLogStep? = nil
+    var relatedActionIDs: [UUID]? = nil
 }
 
 final class DebugLog {
@@ -89,6 +92,7 @@ final class DebugLog {
     private let lock = NSLock()
     private var pending = 0
     private var lost = 0
+    private var pendingPlatform = 0
     private let store: DebugLogStore
     private let maintenance: DispatchSourceTimer
     private let appleLog = OSLog(subsystem: "com.lukeryan.flint", category: "DebugLog")
@@ -152,6 +156,42 @@ final class DebugLog {
         queue.async { [store] in completion((try? store.snapshot()) ?? Data()) }
     }
 
+    func platformSnapshot(completion: @escaping (Data) -> Void) {
+        queue.async { [store] in completion((try? store.platformSnapshot()) ?? Data("[]".utf8)) }
+    }
+
+    /// Admission is independent of writer progress. Raw platform objects remain on this bounded queue only.
+    func ingestPlatform(_ convert: @escaping () -> [PlatformReport]) {
+        lock.lock()
+        guard pendingPlatform < 8 else { lost = min(lost + 1, Int.max - 1); lock.unlock(); return }
+        pendingPlatform += 1
+        lock.unlock()
+        queue.async { [self] in
+            defer { lock.lock(); pendingPlatform -= 1; lock.unlock() }
+            for report in convert() {
+                do { try store.appendPlatform(report) }
+                catch { lock.lock(); lost = min(lost + 1, Int.max - 1); lock.unlock() }
+            }
+        }
+    }
+
+    func monitorObservation(_ observation: ResponsivenessMonitor.Observation) {
+        switch observation {
+        case let .slow(id, step, seconds):
+            let action = begin(.slowOperation, parent: id)
+            record(action, result: .observation, duration: seconds, observedStep: step)
+            action.finish(.success)
+        case let .stall(ids):
+            let action = begin(.suspectedStall, parent: ids.first)
+            record(action, result: .observation, count: ids.count, relatedActionIDs: Array(ids.prefix(32)))
+            action.finish(.success)
+        case let .recovered(seconds):
+            let action = begin(.responsivenessRecovered)
+            record(action, result: .observation, duration: seconds)
+            action.finish(.success)
+        }
+    }
+
     private func fileIdentifier(_ url: URL) -> String {
         HMAC<SHA256>.authenticationCode(for: Data(url.absoluteString.utf8), using: salt)
             .prefix(12).map { String(format: "%02x", $0) }.joined()
@@ -164,7 +204,7 @@ final class DebugLog {
     }
 
     fileprivate func record(_ action: DebugLogAction, result: DebugLogResult, error: Error? = nil,
-                            count: Int? = nil, bytes: Int? = nil) {
+                            count: Int? = nil, bytes: Int? = nil, duration: Double? = nil, observedStep: DebugLogStep? = nil, relatedActionIDs: [UUID]? = nil) {
         let classified = (error != nil || result == .failure)
             ? DebugLogError.classify(error, step: action.step) : nil
         let now = ProcessInfo.processInfo.systemUptime
@@ -172,8 +212,8 @@ final class DebugLog {
             severity: result == .failure || result == .timeout ? "error" : "info",
             step: action.step, result: result, appVersion: version, build: build, launchID: launchID,
             actionID: action.id, parentActionID: action.parent, fileID: action.fileID,
-            durationSeconds: result == .started ? nil : now - action.start, count: count.map { max(0, $0) },
-            bytes: bytes.map { max(0, $0) }, errorCategory: classified?.0, errorCode: classified?.1)
+            durationSeconds: duration ?? (result == .started ? nil : now - action.start), count: count.map { max(0, $0) },
+            bytes: bytes.map { max(0, $0) }, errorCategory: classified?.0, errorCode: classified?.1, observedStep: observedStep, relatedActionIDs: relatedActionIDs)
         // Never wait for disk or a slow writer. Only the small admission counter is locked.
         lock.lock()
         guard pending < 512 else { lost = min(lost + 1, Int.max - 1); lock.unlock(); return }
@@ -219,6 +259,9 @@ final class DebugLogAction {
         self.log = log; self.step = step; self.fileID = fileID; self.parent = parent
         log.record(self, result: .started)
         log.signpost(self, begin: true)
+        if ![DebugLogStep.slowOperation, .suspectedStall, .responsivenessRecovered, .droppedEntries].contains(step) {
+            RuntimeMonitoring.monitor.begin(id, step: step)
+        }
     }
 
     func finish(_ result: DebugLogResult, error: Error? = nil, count: Int? = nil, bytes: Int? = nil) {
@@ -236,6 +279,7 @@ final class DebugLogAction {
         lock.unlock()
         log.record(self, result: result, error: error, count: count, bytes: bytes)
         log.signpost(self, begin: false)
+        RuntimeMonitoring.monitor.end(id, parent: parent)
     }
 
     deinit { if terminal == nil { finish(.abandonment) } }

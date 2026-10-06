@@ -75,6 +75,47 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.hasUnsavedChanges)
     }
 
+    func testInterruptedRestorationAndMarkerFailurePreventProviderWorkWithoutDeletingBookmark() async {
+        do {
+            let bookmarkStore = BookmarkStoreSpy(); bookmarkStore.storedBookmarkData = Data("bookmark".utf8)
+            let files = FileServiceSpy(); let safety = RestorationSafetySpy(); safety.allowed = false
+            let model = AppModel(bookmarkStore: bookmarkStore, fileService: files, restorationSafety: safety)
+            await model.bootstrap()
+            XCTAssertEqual(model.phase, .restorationRecovery)
+            XCTAssertEqual(bookmarkStore.resolveCalls, 0)
+            XCTAssertTrue(files.listMarkdownNotesCalls.isEmpty)
+            XCTAssertNotNil(bookmarkStore.storedBookmarkData)
+            await model.chooseAnotherVault()
+            XCTAssertEqual(model.phase, .onboarding)
+            XCTAssertNotNil(bookmarkStore.storedBookmarkData)
+        }
+    }
+
+    func testExplicitRestorationRetryReopensBookmarkAndCommitsCompletion() async {
+        let bookmarkStore = BookmarkStoreSpy(); bookmarkStore.storedBookmarkData = Data("bookmark".utf8)
+        let files = FileServiceSpy(); let safety = RestorationSafetySpy(); safety.allowed = false
+        let model = AppModel(bookmarkStore: bookmarkStore, fileService: files, restorationSafety: safety)
+        await model.bootstrap()
+        safety.allowed = true
+        await model.retryRestoration()
+        XCTAssertEqual(model.phase, .ready)
+        XCTAssertEqual(safety.explicitAttempts, [false, true])
+        XCTAssertEqual(safety.completions, [true])
+        XCTAssertEqual(bookmarkStore.resolveCalls, 1)
+    }
+
+    func testHandledRestorationFailureCommitsAbandonment() async {
+        let bookmarkStore = BookmarkStoreSpy(); bookmarkStore.storedBookmarkData = Data("bookmark".utf8)
+        bookmarkStore.resolveError = CocoaError(.fileReadCorruptFile)
+        let files = FileServiceSpy(); let safety = RestorationSafetySpy()
+        let model = AppModel(bookmarkStore: bookmarkStore, fileService: files, restorationSafety: safety)
+        await model.bootstrap()
+        XCTAssertEqual(model.phase, .onboarding)
+        XCTAssertEqual(safety.completions, [false])
+        XCTAssertNil(bookmarkStore.storedBookmarkData)
+        XCTAssertTrue(files.listMarkdownNotesCalls.isEmpty)
+    }
+
     func testBootstrapWithoutStoredBookmarkShowsOnboarding() async {
         let bookmarkStore = BookmarkStoreSpy()
         let fileService = FileServiceSpy()
@@ -422,6 +463,8 @@ final class AppModelTests: XCTestCase {
 private final class BookmarkStoreSpy: VaultBookmarkStoring {
     var storedBookmarkData: Data?
     var savedBookmarkData: Data?
+    var resolveCalls = 0
+    var resolveError: Error?
 
     func loadBookmarkData() -> Data? {
         storedBookmarkData
@@ -441,7 +484,9 @@ private final class BookmarkStoreSpy: VaultBookmarkStoring {
     }
 
     func resolveBookmarkData(_ data: Data) throws -> URL {
-        URL(fileURLWithPath: "/tmp/resolved-vault", isDirectory: true)
+        resolveCalls += 1
+        if let resolveError { throw resolveError }
+        return URL(fileURLWithPath: "/tmp/resolved-vault", isDirectory: true)
     }
 }
 
@@ -521,4 +566,12 @@ private func makeNote(
         createdAt: createdAt,
         lastModifiedAt: modifiedAt
     )
+}
+
+private final class RestorationSafetySpy: RestorationSafetyChecking {
+    var allowed = true
+    var explicitAttempts: [Bool] = []
+    var completions: [Bool] = []
+    func begin(launchID: UUID, explicit: Bool) async -> Bool { explicitAttempts.append(explicit); return allowed }
+    func finish(completed: Bool) async { completions.append(completed) }
 }

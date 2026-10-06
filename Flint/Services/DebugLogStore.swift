@@ -64,7 +64,7 @@ final class DebugLogStore {
     func snapshot() throws -> Data {
         try prune()
         var output = Data()
-        for file in try segments() {
+        for file in try segments() where file.url.pathExtension == "jsonl" {
             // Malformed/oversized segments cannot force unbounded reads.
             guard file.size <= Self.segmentLimit,
                   let data = try? Data(contentsOf: file.url) else { continue }
@@ -91,7 +91,8 @@ final class DebugLogStore {
         let safeFile = entry.fileID.map { value in
             value.count == 24 && value.allSatisfy { "0123456789abcdef".contains($0) }
         } ?? true
-        return ["info", "error"].contains(entry.severity) && safeIdentity(entry.appVersion)
+        return (entry.relatedActionIDs.map { $0.count <= 32 } ?? true)
+            && ["info", "error"].contains(entry.severity) && safeIdentity(entry.appVersion)
             && safeIdentity(entry.build) && safeFile && entry.elapsedSeconds.isFinite && entry.elapsedSeconds >= 0
             && (entry.durationSeconds.map { $0.isFinite && $0 >= 0 } ?? true)
             && (entry.count.map { $0 >= 0 } ?? true) && (entry.bytes.map { $0 >= 0 } ?? true)
@@ -105,10 +106,18 @@ final class DebugLogStore {
     private func segments() throws -> [(url: URL, size: Int, date: Date)] {
         guard manager.fileExists(atPath: directory.path) else { return [] }
         return try manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey, .creationDateKey])
-            .filter { $0.pathExtension == "jsonl" }
+            .filter { ["jsonl", "report"].contains($0.pathExtension) }
             .map { url in
                 let v = try url.resourceValues(forKeys: [.fileSizeKey, .creationDateKey])
-                return (url: url, size: v.fileSize ?? 0, date: v.creationDate ?? .distantPast)
+                var date = v.creationDate ?? .distantPast
+                if url.pathExtension == "report" {
+                    if (v.fileSize ?? Int.max) <= Self.segmentLimit,
+                       let data = try? Data(contentsOf: url),
+                       let saved = try? decoder.decode(SavedPlatformReport.self, from: data), saved.report.isSafe {
+                        date = min(date, saved.report.windowEnd)
+                    } else { date = .distantPast }
+                }
+                return (url: url, size: v.fileSize ?? 0, date: date)
             }.sorted { $0.date < $1.date }
     }
 }

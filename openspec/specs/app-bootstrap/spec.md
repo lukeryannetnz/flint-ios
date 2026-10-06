@@ -32,7 +32,7 @@ The system SHALL show onboarding when no vault bookmark has been stored.
 
 ### Requirement: Restore previously selected vault
 
-The system SHALL attempt to reopen the previously selected vault from persisted bookmark data.
+The system SHALL attempt to reopen the previously selected vault from persisted bookmark data only after restoration safety authorizes automatic access. An unfinished, corrupt, unreadable or unwritable safety marker SHALL show recovery before bookmark resolution or provider access. Explicit retry and choosing another vault SHALL preserve the bookmark unless resolution independently proves it unusable.
 
 #### Scenario: Stored bookmark resolves successfully
 
@@ -76,3 +76,15 @@ The system SHALL present operational failures through a dismissible alert.
 - THEN the app returns to onboarding
 - AND active vault state, note selection, and editor contents are cleared
 - AND the app shows the localized error message in an alert
+
+### Requirement: Finish restoration safety records
+
+Successful restoration SHALL commit completion; handled restoration failure SHALL commit abandonment. If that commit fails, the unfinished marker SHALL remain conservative on the next launch. Recovery SHALL describe interrupted restoration without asserting a crash. Diagnostic sharing remains part of the later export phase.
+
+#### Scenario: Previous restoration was interrupted
+
+- GIVEN an unfinished restoration marker exists
+- WHEN bootstrap runs
+- THEN recovery is shown without resolving or deleting the saved bookmark
+- AND explicit retry can reopen the saved selection
+- AND choosing another vault shows onboarding while preserving the bookmark
