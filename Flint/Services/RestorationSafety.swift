@@ -19,27 +19,34 @@ final class RestorationSafety: RestorationSafetyChecking {
     private let queue: DispatchQueue
     private let directory: URL
     private let timeout: TimeInterval
+    private let terminalStaged: () -> Void
     private let admission = NSLock()
     private var writerOccupied = false
     // Writer-owned. It must never be reset by a second, overlapping attempt.
     private var current: Marker?
 
     init(directory: URL? = nil, timeout: TimeInterval = 1,
-         queue: DispatchQueue = DispatchQueue(label: "flint.restoration-safety", qos: .utility)) {
+         queue: DispatchQueue = DispatchQueue(label: "flint.restoration-safety", qos: .utility),
+         terminalStaged: @escaping () -> Void = {}) {
         self.directory = directory ?? URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Application Support/RestorationSafety", isDirectory: true)
         self.timeout = timeout
         self.queue = queue
+        self.terminalStaged = terminalStaged
     }
 
     func begin(launchID: UUID, explicit: Bool = false) async -> Bool {
-        await bounded {
+        await bounded { _ in
             let url = self.directory.appendingPathComponent("marker.json")
-            if !explicit && FileManager.default.fileExists(atPath: url.path) {
-                guard try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? Int.max <= 4096 else { return false }
-                let data = try Data(contentsOf: url)
-                let marker = try JSONDecoder().decode(Marker.self, from: data)
-                guard marker.version == 1, marker.state != .started else { return false }
+            if !explicit {
+                do {
+                    guard try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? Int.max <= 4096 else { return false }
+                    let data = try Data(contentsOf: url)
+                    let marker = try JSONDecoder().decode(Marker.self, from: data)
+                    guard marker.version == 1, marker.state != .started else { return false }
+                } catch CocoaError.fileReadNoSuchFile {
+                    // Only confirmed absence permits first-use restoration.
+                }
             }
             let marker = Marker(version: 1, launchID: launchID, actionID: UUID(), timestamp: Date(), state: .started)
             try self.write(marker)
@@ -49,7 +56,7 @@ final class RestorationSafety: RestorationSafetyChecking {
     }
 
     func finish(completed: Bool) async {
-        _ = await bounded {
+        _ = await bounded { result in
             let old: Marker
             if let current = self.current { old = current }
             else {
@@ -58,21 +65,29 @@ final class RestorationSafety: RestorationSafetyChecking {
                 old = try JSONDecoder().decode(Marker.self, from: Data(contentsOf: url))
                 guard old.version == 1, old.state == .started else { return false }
             }
+            // Keep the authoritative started marker intact throughout potentially slow I/O.
+            let staged = self.directory.appendingPathComponent("terminal.json")
             try self.write(Marker(version: 1, launchID: old.launchID, actionID: old.actionID,
-                                  timestamp: Date(), state: completed ? .completed : .abandoned))
+                                  timestamp: Date(), state: completed ? .completed : .abandoned), to: staged)
+            self.terminalStaged()
+            // Publication is admitted only if success wins the race with the deadline.
+            // A crash or failed rename after admission still leaves recovery conservative.
+            guard result.admitPublication() else { return false }
+            let authoritative = self.directory.appendingPathComponent("marker.json")
+            guard rename(staged.path, authoritative.path) == 0 else { return false }
             self.current = nil
             return true
         }
     }
 
-    private func write(_ marker: Marker) throws {
+    private func write(_ marker: Marker, to destination: URL? = nil) throws {
         let manager = FileManager.default
         try manager.createDirectory(at: directory, withIntermediateDirectories: true,
             attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
         var folder = directory
         var values = URLResourceValues(); values.isExcludedFromBackup = true
         try folder.setResourceValues(values)
-        let url = directory.appendingPathComponent("marker.json")
+        let url = destination ?? directory.appendingPathComponent("marker.json")
         try JSONEncoder().encode(marker).write(to: url,
             options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         let handle = try FileHandle(forWritingTo: url)
@@ -91,16 +106,16 @@ final class RestorationSafety: RestorationSafetyChecking {
         admission.lock(); writerOccupied = false; admission.unlock()
     }
 
-    private func bounded(_ work: @escaping () throws -> Bool) async -> Bool {
+    private func bounded(_ work: @escaping (SafetyResult) throws -> Bool) async -> Bool {
         guard admit() else { return false }
         return await withCheckedContinuation { continuation in
-            let result = SafetyResult(continuation)
+            let result = SafetyResult(continuation, timeout: timeout)
             queue.async {
-                let value = (try? work()) ?? false
+                let value = (try? work(result)) ?? false
                 self.releaseWriter()
                 result.resolve(value)
             }
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) { result.resolve(false) }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) { result.timeout() }
         }
     }
 }
@@ -108,7 +123,25 @@ final class RestorationSafety: RestorationSafetyChecking {
 private final class SafetyResult {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Bool, Never>?
-    init(_ continuation: CheckedContinuation<Bool, Never>) { self.continuation = continuation }
+    private let deadline: TimeInterval
+    init(_ continuation: CheckedContinuation<Bool, Never>, timeout: TimeInterval) {
+        self.continuation = continuation
+        deadline = ProcessInfo.processInfo.systemUptime + timeout
+    }
+    private var publicationAdmitted = false
+    func admitPublication() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard continuation != nil, ProcessInfo.processInfo.systemUptime < deadline else { return false }
+        publicationAdmitted = true
+        return true
+    }
+    func timeout() {
+        lock.lock()
+        let accepted = publicationAdmitted
+        let pending = continuation; continuation = nil
+        lock.unlock()
+        pending?.resume(returning: accepted)
+    }
     func resolve(_ value: Bool) {
         lock.lock(); let pending = continuation; continuation = nil; lock.unlock()
         pending?.resume(returning: value)

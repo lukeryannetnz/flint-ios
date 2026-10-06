@@ -191,3 +191,18 @@ A utility timer SHALL inspect a thread-safe action snapshot and schedule at most
 - WHEN the app leaves the foreground and later returns
 - THEN time suspended is excluded from action elapsed time
 - AND stale heartbeat acknowledgments do not create a stall or recovery for suspension
+
+#### Scenario: Terminal safety writer completes after its deadline
+
+- WHEN completion or abandonment storage exceeds the bounded wait
+- THEN the durable started marker remains authoritative on subsequent launches
+- AND a late staged terminal write is never published over that marker
+- AND a terminal record is durably staged before its publication is admitted within the deadline
+- AND an admitted publication may finish after the bounded caller returns; this is accepted work, not a timed-out request
+- AND failed publication leaves the started marker conservative
+
+#### Scenario: Foreground transitions while a heartbeat is queued
+
+- WHEN the app repeatedly leaves and enters the foreground before a queued heartbeat returns
+- THEN no additional heartbeat is queued until that acknowledgment arrives
+- AND the stale acknowledgment emits no stall or recovery observation

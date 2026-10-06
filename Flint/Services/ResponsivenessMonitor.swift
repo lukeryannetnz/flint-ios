@@ -20,6 +20,7 @@ final class ResponsivenessMonitor {
     private var lastTick: Double
     private var heartbeat: (id: UUID, start: Double)?
     private var stalled = false
+    private var heartbeatIsCurrent = false
 
     init(clock: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
          emit: @escaping (Observation) -> Void) {
@@ -29,7 +30,7 @@ final class ResponsivenessMonitor {
     func setActive(_ value: Bool) {
         lock.lock()
         advance(to: clock())
-        active = value; heartbeat = nil; stalled = false
+        active = value; heartbeatIsCurrent = false; stalled = false
         lock.unlock()
     }
     func begin(_ id: UUID, step: DebugLogStep) {
@@ -51,12 +52,12 @@ final class ResponsivenessMonitor {
             action.reported = true; actions[id] = action
             observations.append(.slow(id, action.step, action.elapsed))
         }
-        if let heartbeat, now - heartbeat.start >= 2, !stalled {
+        if let heartbeat, heartbeatIsCurrent, now - heartbeat.start >= 2, !stalled {
             stalled = true; observations.append(.stall(Array(actions.keys).sorted { $0.uuidString < $1.uuidString }))
         }
         var token: UUID?
         if heartbeat == nil {
-            token = UUID(); heartbeat = (token!, now)
+            token = UUID(); heartbeat = (token!, now); heartbeatIsCurrent = true
         }
         lock.unlock()
         observations.forEach(emit)
@@ -65,7 +66,12 @@ final class ResponsivenessMonitor {
 
     func acknowledge(_ token: UUID) {
         lock.lock()
-        guard active, let heartbeat, heartbeat.id == token else { lock.unlock(); return }
+        guard let heartbeat, heartbeat.id == token else { lock.unlock(); return }
+        guard active, heartbeatIsCurrent else {
+            self.heartbeat = nil
+            lock.unlock()
+            return
+        }
         let duration = max(0, clock() - heartbeat.start)
         let recovered = stalled
         self.heartbeat = nil; stalled = false

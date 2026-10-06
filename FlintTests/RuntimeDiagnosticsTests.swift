@@ -66,6 +66,96 @@ final class RuntimeDiagnosticsTests: XCTestCase {
         XCTAssertFalse(relaunch)
     }
 
+    func testTimedOutTerminalWritesNeverAuthorizeRelaunch() async throws {
+        for completed in [true, false] {
+            let folder = directory(); defer { try? FileManager.default.removeItem(at: folder) }
+            let queue = DispatchQueue(label: "test.terminal")
+            let safety = RestorationSafety(directory: folder, timeout: 0.02, queue: queue)
+            let started = await safety.begin(launchID: UUID(), explicit: false)
+            XCTAssertTrue(started)
+            queue.suspend()
+            await safety.finish(completed: completed)
+            let retry = await safety.begin(launchID: UUID(), explicit: true)
+            XCTAssertFalse(retry)
+            queue.resume()
+            await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
+            let marker = try JSONDecoder().decode(RestorationSafety.Marker.self,
+                from: Data(contentsOf: folder.appendingPathComponent("marker.json")))
+            XCTAssertEqual(marker.state, .started)
+            let automatic = await RestorationSafety(directory: folder).begin(launchID: UUID(), explicit: false)
+            XCTAssertFalse(automatic)
+            let explicit = await safety.begin(launchID: UUID(), explicit: true)
+            XCTAssertTrue(explicit)
+            await safety.finish(completed: completed)
+            await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
+            let permitted = await RestorationSafety(directory: folder).begin(launchID: UUID(), explicit: false)
+            XCTAssertTrue(permitted)
+        }
+    }
+
+    func testTimeoutAfterTerminalStagingPreservesStartedMarker() async throws {
+        let folder = directory(); defer { try? FileManager.default.removeItem(at: folder) }
+        let gate = DispatchSemaphore(value: 0)
+        let queue = DispatchQueue(label: "test.staged-terminal")
+        let safety = RestorationSafety(directory: folder, timeout: 0.02, queue: queue,
+            terminalStaged: { gate.wait() })
+        let started = await safety.begin(launchID: UUID(), explicit: false)
+        XCTAssertTrue(started)
+        await safety.finish(completed: true)
+        gate.signal()
+        await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("terminal.json").path))
+        let automatic = await RestorationSafety(directory: folder).begin(launchID: UUID(), explicit: false)
+        XCTAssertFalse(automatic)
+    }
+
+    func testTerminalStorageFailurePreservesStartedMarker() async throws {
+        for completed in [true, false] {
+            let folder = directory(); defer { try? FileManager.default.removeItem(at: folder) }
+            let safety = RestorationSafety(directory: folder)
+            let started = await safety.begin(launchID: UUID(), explicit: false)
+            XCTAssertTrue(started)
+            try FileManager.default.createDirectory(at: folder.appendingPathComponent("terminal.json"),
+                withIntermediateDirectories: true)
+            await safety.finish(completed: completed)
+            let automatic = await RestorationSafety(directory: folder).begin(launchID: UUID(), explicit: false)
+            XCTAssertFalse(automatic)
+        }
+    }
+
+    func testUnsupportedAndOversizedMarkersRequireRecovery() async throws {
+        let folder = directory(); defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent("marker.json")
+        let unsupported = RestorationSafety.Marker(version: 2, launchID: UUID(), actionID: UUID(),
+            timestamp: Date(), state: .completed)
+        for data in [try JSONEncoder().encode(unsupported), Data(repeating: 32, count: 4097)] {
+            try data.write(to: url)
+            let automatic = await RestorationSafety(directory: folder).begin(launchID: UUID(), explicit: false)
+            XCTAssertFalse(automatic)
+        }
+    }
+
+    func testForegroundTransitionsKeepOneOutstandingHeartbeat() {
+        var now = 0.0
+        var events: [ResponsivenessMonitor.Observation] = []
+        let monitor = ResponsivenessMonitor(clock: { now }, emit: { events.append($0) })
+        monitor.setActive(true)
+        let stale = monitor.tick()!
+        for _ in 0..<10 {
+            monitor.setActive(false); now += 10; monitor.setActive(true)
+            XCTAssertNil(monitor.tick())
+        }
+        XCTAssertTrue(events.isEmpty)
+        monitor.acknowledge(stale)
+        let fresh = monitor.tick()!
+        now += 2
+        XCTAssertNil(monitor.tick())
+        XCTAssertEqual(events, [.stall([])])
+        monitor.acknowledge(fresh)
+        XCTAssertEqual(events, [.stall([]), .recovered(2)])
+    }
+
     func testForegroundThresholdsBoundedVolumeAndRecoveryDuration() {
         var now = 0.0
         var events: [ResponsivenessMonitor.Observation] = []
