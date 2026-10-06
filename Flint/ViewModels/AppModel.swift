@@ -6,6 +6,7 @@ final class AppModel: ObservableObject {
     enum Phase: Equatable {
         case loading
         case onboarding
+        case restorationRecovery
         case ready
     }
 
@@ -20,14 +21,18 @@ final class AppModel: ObservableObject {
 
     private let bookmarkStore: VaultBookmarkStoring
     private let fileService: VaultFileServing
+    private let restorationSafety: RestorationSafetyChecking
+    private var restorationAttemptActive = false
 
     private var didBootstrap = false
     private var activeSecurityScopedURL: URL?
     private var autosaveTask: Task<Void, Never>?
 
-    init(bookmarkStore: VaultBookmarkStoring, fileService: VaultFileServing) {
+    init(bookmarkStore: VaultBookmarkStoring, fileService: VaultFileServing,
+         restorationSafety: RestorationSafetyChecking = RestorationSafety.shared) {
         self.bookmarkStore = bookmarkStore
         self.fileService = fileService
+        self.restorationSafety = restorationSafety
     }
 
     func bootstrap() async {
@@ -58,15 +63,46 @@ final class AppModel: ObservableObject {
                 return
             }
 
-            do {
-                let url = try bookmarkStore.resolveBookmarkData(bookmarkData)
-                await openVault(at: url, persistSelection: true)
-            } catch {
-                DebugLog.shared.handledFailure(error)
-                bookmarkStore.clearBookmarkData()
-                phase = .onboarding
-                alertMessage = "Your previous vault could not be reopened. Please select it again."
-            }
+            await restoreBookmark(bookmarkData, explicit: false)
+        }
+    }
+
+    func retryRestoration() async {
+        guard phase == .restorationRecovery, !restorationAttemptActive else { return }
+        guard let bookmark = bookmarkStore.loadBookmarkData() else { phase = .onboarding; return }
+        await restoreBookmark(bookmark, explicit: true)
+    }
+
+    func chooseAnotherVault() async {
+        guard phase == .restorationRecovery, !restorationAttemptActive else { return }
+        restorationAttemptActive = true
+        await restorationSafety.finish(completed: false)
+        restorationAttemptActive = false
+        phase = .onboarding
+    }
+
+    private func restoreBookmark(_ bookmark: Data, explicit: Bool) async {
+        restorationAttemptActive = true
+        defer { restorationAttemptActive = false }
+        let action = DebugLog.shared.begin(.restoration)
+        guard await restorationSafety.begin(launchID: DebugLog.shared.launchID, explicit: explicit) else {
+            action.finish(.abandonment)
+            phase = .restorationRecovery
+            return
+        }
+        phase = .loading
+        do {
+            let url = try bookmarkStore.resolveBookmarkData(bookmark)
+            await openVault(at: url, persistSelection: true)
+            let completed = phase == .ready
+            await restorationSafety.finish(completed: completed)
+            action.finish(completed ? .success : .abandonment)
+        } catch {
+            action.finish(.failure, error: error)
+            await restorationSafety.finish(completed: false)
+            bookmarkStore.clearBookmarkData()
+            phase = .onboarding
+            alertMessage = "Your previous vault could not be reopened. Please select it again."
         }
     }
 

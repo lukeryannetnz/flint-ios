@@ -11,6 +11,18 @@ struct RootView: View {
             case .onboarding:
                 VaultOnboardingView(model: model)
                     .onAppear { DebugLog.shared.observe(.firstUsableScreen) }
+            case .restorationRecovery:
+                VStack(spacing: 20) {
+                    Text("Vault restoration was interrupted")
+                        .font(.title2.bold())
+                    Text("Flint could not safely reopen your previous vault automatically. Its saved selection is still available.")
+                        .multilineTextAlignment(.center)
+                    Button("Retry previous vault") { Task { await model.retryRestoration() } }
+                        .disabled(model.isBusy)
+                    Button("Choose another vault") { Task { await model.chooseAnotherVault() } }
+                }
+                .padding(24)
+                .onAppear { DebugLog.shared.observe(.firstUsableScreen) }
             case .ready:
                 VaultBrowserView(model: model)
                     .onAppear { DebugLog.shared.observe(.firstUsableScreen) }
