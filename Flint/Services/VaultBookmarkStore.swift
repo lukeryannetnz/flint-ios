@@ -17,7 +17,9 @@ final class VaultBookmarkStore: VaultBookmarkStoring {
     }
 
     func loadBookmarkData() -> Data? {
-        userDefaults.data(forKey: key)
+        let action = DebugLog.shared.begin(.bookmarkLoad)
+        defer { action.finish(.success) }
+        return userDefaults.data(forKey: key)
     }
 
     func saveBookmarkData(_ data: Data) {
@@ -29,20 +31,24 @@ final class VaultBookmarkStore: VaultBookmarkStoring {
     }
 
     func makeBookmark(for url: URL) throws -> Data {
-        try url.bookmarkData(
-            options: [.minimalBookmark],
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        )
+        return try DebugLog.shared.measure(.bookmarkCreate, file: url) {
+            try url.bookmarkData(
+                options: [.minimalBookmark],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+        }
     }
 
     func resolveBookmarkData(_ data: Data) throws -> URL {
-        var isStale = false
-        return try URL(
-            resolvingBookmarkData: data,
-            options: [],
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        )
+        return try DebugLog.shared.measure(.bookmarkResolve) {
+            var isStale = false
+            return try URL(
+                resolvingBookmarkData: data,
+                options: [],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+        }
     }
 }

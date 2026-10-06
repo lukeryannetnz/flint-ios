@@ -17,3 +17,7 @@ The goal is to answer: **Will these logs tell us what failed without collecting 
 ## Risks / Trade-offs
 
 The limits are proposed acceptance criteria, not measurements of the current app. Some iOS or Dropbox information may be unavailable; logs and test records must state what is missing. Notes and images retain their current file formats.
+
+## Implementation boundary
+
+`DebugLog` owns typed events, action lifetimes, Apple log/signpost output and a serial app-local writer. `DebugLogStore` owns segmented storage. Recovery code can call `snapshot` without knowing provider services. Instrumentation does not change file scheduling; spec 3 owns that work.

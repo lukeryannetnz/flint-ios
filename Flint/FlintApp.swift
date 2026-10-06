@@ -10,6 +10,9 @@ struct FlintApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(model: model)
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+                    DebugLog.shared.observe(.memoryWarning)
+                }
         }
     }
 }

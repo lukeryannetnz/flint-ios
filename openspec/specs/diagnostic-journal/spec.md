@@ -4,7 +4,7 @@
 
 Describe the debug log Flint will save on the iPhone so developers can see what the app was doing before a file-loading failure.
 
-Status: proposed behavior, not yet implemented. The task list records the work and testing still needed.
+Status: implemented and simulator-tested. Real-iPhone Dropbox performance validation remains pending; this change adds logging and does not establish that provider hangs or crashes are fixed.
 
 ## Requirements
 
@@ -26,6 +26,8 @@ The system SHALL save and export only explicitly permitted log fields, limited l
 - WHEN Flint cannot read a preview or file details and uses a placeholder
 - THEN the log distinguishes that failure from successfully reading an empty file and records the step and safe error codes
 - AND it distinguishes missing files, unavailable downloads, permission failures, read/write coordination problems, invalid saved-folder references and unreadable images only when the evidence supports that conclusion
+- AND classification uses the failed step and explicit platform error evidence; a corrupt bookmark, failed coordination, and failed image decoding have distinct categories
+- AND explicit provider-unavailable and download-unavailable errors have distinct categories; an unrecognized error stays unknown
 - AND unknown download/provider state stays unknown; a path or iCloud-only status does not prove a Dropbox file is downloaded
 
 ### Requirement: Limit log storage and its effect on performance
@@ -35,5 +37,14 @@ The system SHALL save versioned debug logs in protected app storage on the iPhon
 - WHEN log writing falls behind or storage fails
 - THEN at most 512 entries wait to be written, each normal entry is at most 16 KiB, and each log-file segment is at most 256 KiB
 - AND excess or oversized entries are skipped, with a limited counter recording the loss, instead of making the app wait
+- AND accumulated loss counts remain pending until their counter entry is successfully saved, including across repeated storage failures
 - AND an incomplete entry does not prevent startup, and old/expired entries are removed first
 - AND a logging error does not trigger an endless stream of new log errors or crash the app
+
+### Requirement: Share a safe logging interface with recovery features
+The logger SHALL expose typed action/step identifiers, privacy-filtered error categories, and asynchronous snapshots of complete saved entries. Snapshot reads SHALL use only app-local storage and skip invalid or incomplete records. No API SHALL accept arbitrary log messages or document text.
+
+#### Scenario: A recovery feature needs logs while a provider is stuck
+- WHEN it asks the logger for saved entries
+- THEN the request runs on the log writer rather than a provider worker or screen-update thread
+- AND the result contains only valid versioned entries within the retention limits
