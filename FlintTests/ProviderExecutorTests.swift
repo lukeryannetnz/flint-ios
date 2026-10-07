@@ -127,6 +127,36 @@ final class ProviderExecutorTests: XCTestCase {
         XCTAssertEqual(executor.counts.active, 0); XCTAssertEqual(scopes.started, scopes.stopped)
     }
 
+    func testLateScopeAcquisitionDoesNotAcquireMoreResourcesAfterTimeout() async throws {
+        let time = TestTime(), clock = ForegroundClock(clock: { time.now })
+        let attempt = ProviderAttempt(clock: clock)
+        let root = URL(fileURLWithPath: "/tmp/blocked-scope")
+        let source = URL(fileURLWithPath: "/tmp/later-source")
+        let gate = DispatchSemaphore(value: 0); defer { gate.signal() }
+        let entered = expectation(description: "root scope acquisition blocked")
+        let finished = expectation(description: "actual worker returned")
+        let scopes = ScopeCounts()
+        let executor = ProviderExecutor(automaticSampling: false, startScope: { url in
+            scopes.start(url)
+            if url == root { entered.fulfill(); gate.wait() }
+            return true
+        }, stopScope: { scopes.stop($0) }, workerDidFinish: { finished.fulfill() })
+        let task = Task {
+            try await executor.execute(ProviderRequest(vaultURL: root, attempt: attempt), step: .imageImport, resources: [source]) { _ in
+                XCTFail("No later provider stage may run"); return 1
+            }
+        }
+        await fulfillment(of: [entered], timeout: 2)
+        time.advance(30); executor.sample()
+        do { _ = try await task.value; XCTFail("Expected logical timeout") }
+        catch { XCTAssertEqual((error as? ProviderFailure)?.reason, .timedOut) }
+        XCTAssertEqual(executor.counts.active, 1); XCTAssertEqual(scopes.stopped, 0)
+        gate.signal()
+        await fulfillment(of: [finished], timeout: 20)
+        XCTAssertEqual(scopes.started, 1); XCTAssertEqual(scopes.stopped, 1)
+        XCTAssertEqual(executor.counts.active, 0)
+    }
+
     func testPendingQueueLimitAndQueuedCancellation() async throws {
         let gate = DispatchSemaphore(value: 0)
         let executor = ProviderExecutor(automaticSampling: false, startScope: { _ in false })

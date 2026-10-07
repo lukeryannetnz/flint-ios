@@ -294,8 +294,10 @@ final class ProviderExecutor {
     }
     private func dispatch(_ job: ProviderJob) {
         workers.async { [self] in
-            if (try? job.context.checkCancellation()) != nil {
-                job.context.leases = job.resources.map { SecurityScopeLease(url: $0, start: startScope, stop: stopScope) }
+            for url in job.resources {
+                guard (try? job.context.checkCancellation()) != nil else { break }
+                job.request.attempt.setStage(.securityScope)
+                job.context.leases.append(SecurityScopeLease(url: url, start: startScope, stop: stopScope))
             }
             job.request.attempt.setStage(job.step)
             let callback = DebugLog.$currentAction.withValue(job.action.id) { job.execute() }

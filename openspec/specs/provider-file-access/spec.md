@@ -174,6 +174,12 @@ Vault-file methods SHALL accept a request carrying vault-root identity, foregrou
 - THEN no later provider stage is dispatched for that attempt
 - AND no bookmark, vault, selection, busy state or alert belonging to a newer attempt is replaced
 
+#### Scenario: Scope acquisition finishes after cancellation
+
+- WHEN acquiring the first resource scope blocks and the attempt is cancelled or times out
+- THEN logical recovery does not wait for acquisition
+- AND eventual acquisition is balanced without acquiring subsequent source scopes or entering another provider stage
+
 ### Requirement: Keep uncertain mutations separate from retries
 
 The executor SHALL retain an actual mutation outcome for the owning attempt after logical timeout or cancellation. A retry SHALL first establish whether the original write/create finished, without issuing another mutation while it drains. Saves SHALL snapshot their original text, destination and revision; an asynchronous completion SHALL not clear newer edits. Navigation SHALL first save dirty text and remain at its original destination if saving cannot be established. Explicit retain/discard recovery storage is added in phase 4.
