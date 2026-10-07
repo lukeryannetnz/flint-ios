@@ -206,6 +206,13 @@ Loading SHALL publish current stage and a slow indicator, allow cancellation, an
 
 A successful note creation SHALL retain its destination URL until discovery and selection succeed. Retrying the same creation name and folder after refresh/read failure SHALL reuse that result and SHALL not issue another create mutation. Switching vault generations SHALL discard obsolete creation presentation state.
 
+#### Scenario: Navigation changes while creation awaits
+
+- WHEN creation succeeds after the user selects another note in the same vault
+- THEN the destination URL is retained before stale navigation is rejected
+- AND the newer selection remains unchanged
+- AND retrying the same name and folder opens the existing result without another create mutation
+
 #### Scenario: Refresh fails after creation
 
 - WHEN note creation succeeds and discovery fails or times out

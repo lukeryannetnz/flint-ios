@@ -265,8 +265,9 @@ final class AppModel: ObservableObject {
                     url = try await fileService.createNote(named: name, in: folder, request: request)
                 }
             } else { url = try await fileService.createNote(named: name, in: folder, request: request) }
-            guard vaultGeneration == vault, navigationGeneration == operation else { return }
+            guard vaultGeneration == vault else { return }
             completedNoteCreations[key] = url
+            guard navigationGeneration == operation else { return }
             let discovered = try await fileService.listMarkdownNotes(in: root, request: request)
             guard vaultGeneration == vault, navigationGeneration == operation else { return }
             notes = discovered

@@ -232,6 +232,27 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.phase, .ready); XCTAssertEqual(model.activeVault?.url, root)
     }
 
+    func testCreationRetryRetainsSuccessWhenNavigationChangesDuringMutation() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/creation-stale-navigation")
+        let original = makeNote(title: "Original", url: root.appendingPathComponent("Original.md"))
+        let other = makeNote(title: "Other", url: root.appendingPathComponent("Other.md"))
+        files.notesToReturn = [original, other]
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files, restorationSafety: RestorationSafetySpy())
+        await model.openVault(at: root)
+        var release: CheckedContinuation<Void, Never>?
+        files.noteCreationHook = { await withCheckedContinuation { release = $0 } }
+        let creation = Task { await model.createNote(named: "Created.md") }
+        await modelWait { release != nil }
+        await model.openNote(other)
+        release?.resume(); await creation.value
+        XCTAssertEqual(model.selectedNote?.url, other.url)
+        files.noteCreationHook = nil
+        await model.createNote(named: "Created.md")
+        XCTAssertEqual(files.createdNoteCalls.count, 1)
+        XCTAssertEqual(model.selectedNote?.url, root.appendingPathComponent("Created.md"))
+        XCTAssertFalse(model.isBusy)
+    }
+
     func testCreationRetryReusesSuccessAfterDiscoveryFailure() async {
         let files = FileServiceSpy()
         let root = URL(fileURLWithPath: "/tmp/created-note-recovery")
@@ -932,6 +953,7 @@ private final class FileServiceSpy: VaultFileServing {
     var readHook: ((URL, ProviderRequest) async throws -> String)?
     var saveHook: ((String, URL, ProviderRequest) async throws -> Void)?
     var createHook: ((String, URL, ProviderRequest) async throws -> URL)?
+    var noteCreationHook: (() async -> Void)?
     var createVaultCalls: [(String, URL)] = []
     var createdNoteCalls: [(String, URL)] = []
     var listMarkdownNotesCalls: [URL] = []
@@ -962,6 +984,7 @@ private final class FileServiceSpy: VaultFileServing {
         let url = vaultURL.appendingPathComponent(name)
         if notesToReturn.contains(where: { $0.url == url }) { throw VaultError.itemAlreadyExists(name) }
         notesToReturn.append(makeNote(title: name, url: url))
+        if let noteCreationHook { await noteCreationHook() }
         return url
     }
 
