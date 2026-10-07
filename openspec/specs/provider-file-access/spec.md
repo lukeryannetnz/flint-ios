@@ -163,3 +163,88 @@ The implementation SHALL include deterministic tests with controllable blocking 
 - AND taps and scrolling remain responsive during delayed I/O
 - AND memory and concurrency stay within the stated budgets
 - AND saved markdown and referenced assets remain intact after failure, retry, and relaunch
+
+### Requirement: Carry explicit asynchronous request identity
+
+Vault-file methods SHALL accept a request carrying vault-root identity, foreground deadline, priority and attempt identity, and SHALL return asynchronously with a value or typed cancellation/timeout/capacity failure. Bookmark resolution and creation SHALL use the same bounded executor. A loading attempt SHALL share a single 30-second foreground budget across setup, discovery and initial content; starting another stage SHALL not reset it.
+
+#### Scenario: Late setup completion
+
+- WHEN bookmark or scope acquisition finishes after its attempt was cancelled or timed out
+- THEN no later provider stage is dispatched for that attempt
+- AND no bookmark, vault, selection, busy state or alert belonging to a newer attempt is replaced
+
+#### Scenario: Scope acquisition finishes after cancellation
+
+- WHEN acquiring the first resource scope blocks and the attempt is cancelled or times out
+- THEN logical recovery does not wait for acquisition
+- AND eventual acquisition is balanced without acquiring subsequent source scopes or entering another provider stage
+
+### Requirement: Keep uncertain mutations separate from retries
+
+The executor SHALL retain an actual mutation outcome for the owning attempt after logical timeout or cancellation. A retry SHALL first establish whether the original write/create finished, without issuing another mutation while it drains. Saves SHALL snapshot their original text, destination and revision; an asynchronous completion SHALL not clear newer edits. Navigation SHALL first save dirty text and remain at its original destination if saving cannot be established. Explicit retain/discard recovery storage is added in phase 4.
+
+#### Scenario: Creation finishes after its deadline
+
+- WHEN the user retries a timed-out creation
+- THEN pending work is described as still stopping
+- AND actual success opens the already-created result rather than creating a duplicate
+- AND only actual failure or a request that never started permits a new create attempt
+
+### Requirement: Keep recovery actions usable during blocked file access
+
+Loading SHALL publish current stage and a slow indicator, allow cancellation, and transition to recovery independently of blocked workers. Recovery SHALL support retry, choosing another vault, and exporting sanitized app-local evidence. A minimal bounded sharing action SHALL be available in phase 3; category/time-range preview and clear-history controls are added in phase 6.
+
+#### Scenario: Provider workers are both occupied
+
+- WHEN a new explicit attempt cannot acquire bounded capacity
+- THEN the UI reports busy recovery immediately
+- AND it creates no extra provider threads or unbounded queued retries
+- AND local diagnostic sharing remains available
+
+### Requirement: Retain successful creation through follow-up failure
+
+A successful note creation SHALL retain its destination URL until discovery and selection succeed. Retrying the same creation name and folder after refresh/read failure SHALL reuse that result and SHALL not issue another create mutation. Switching vault generations SHALL discard obsolete creation presentation state.
+
+#### Scenario: Navigation changes while creation awaits
+
+- WHEN creation succeeds after the user selects another note in the same vault
+- THEN the destination URL is retained before stale navigation is rejected
+- AND the newer selection remains unchanged
+- AND retrying the same name and folder opens the existing result without another create mutation
+
+#### Scenario: Refresh fails after creation
+
+- WHEN note creation succeeds and discovery fails or times out
+- THEN retry refreshes and opens the already-created note
+- AND no duplicate creation is attempted
+
+#### Scenario: Dirty editor prevents opening a created note
+
+- WHEN edits made while creation refresh awaits cannot be saved before navigation
+- THEN the previous editor retains its text and destination
+- AND the creation busy indicator clears
+- AND the created URL remains available for retry
+
+### Requirement: Recover typed late image outcomes
+
+Actual mutation outcomes SHALL preserve created URLs, complete image-import results and valueless saves as distinct typed values. During the current process, the model SHALL retain timed-out or stale successful imports by their original note URL. Another import for a note with unresolved outcomes SHALL not create a replacement asset. Explicit recovery in that original note SHALL insert the completed result at the current cursor once, without copying or encoding again. A running import SHALL remain pending; an actual failure SHALL permit a new source selection. Navigation SHALL not discard a pending result or insert it into another note. No recovery path SHALL delete a referenced asset. Durable pending-asset reconciliation across relaunch remains part of the later image workflow.
+
+#### Scenario: Image import succeeds after timeout
+
+- WHEN a file or camera import times out and subsequently finishes
+- THEN its full Markdown, asset URL and alt text remain available
+- AND Recover image reuses that completed result without another provider mutation
+- AND switching notes cannot insert the late result into the new note
+
+#### Scenario: Repeated source callback while an import is active
+
+- WHEN another file or camera callback arrives before the first import returns
+- THEN the first request is registered as in flight before provider dispatch
+- AND the second callback cannot create another asset or clear the first request's busy state
+
+#### Scenario: Actual late failure permits a fresh source
+
+- WHEN a timed-out import has actually failed or never started
+- THEN a new source selection removes that resolved failure before admission
+- AND no Recover action is required to start the replacement

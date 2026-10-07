@@ -17,12 +17,12 @@
 
 ## 3. Asynchronous file access and worker lifetime
 
-- [ ] 3.1 Replace the synchronous vault-file interface with asynchronous operation results and migrate `AppModel`, bookmark restoration, real adapters, and spies; verify ordinary vault creation, open, note creation/read/write, and existing import tests through the new interface.
-- [ ] 3.2 Add the bounded blocking executor with two global slots, one per vault, 32 pending requests, priority for explicit actions, and a separately bounded decode lane; verify fault tests prove concurrency/queue limits and no provider access executes on the main thread.
-- [ ] 3.3 Add per-operation coordination cancellation, generation invalidation, 30-second foreground deadlines, and independent logical completion; verify blocked-before-accessor and blocked-inside-accessor tests return UI recovery without waiting and reject late results.
-- [ ] 3.4 Add worker-owned source/destination security-scope leases; verify timed-out workers retain access until actual completion, start/stop calls balance, and another vault can use the remaining slot.
-- [ ] 3.5 Integrate explicit loading/pending/recovery state into `AppModel` and `RootView`, including retry saturation and uncertain creation outcomes; verify UI fault cases can cancel, choose another vault, or export without stale alerts/state replacing the current screen.
-- [ ] 3.6 Document cancellation guarantees, worker capacity, and lease lifetime in the module interface; verify tests demonstrate the documented distinction between logical cancellation and actual accessor termination.
+- [x] 3.1 Replace the synchronous vault-file interface with asynchronous operation results and migrate `AppModel`, bookmark restoration, real adapters, and spies; verify ordinary vault creation, open, note creation/read/write, and existing import tests through the new interface.
+- [x] 3.2 Add the bounded blocking executor with two global slots, one per vault, 32 pending requests, priority for explicit actions, and a separately bounded decode lane; verify fault tests prove concurrency/queue limits and no provider access executes on the main thread.
+- [x] 3.3 Add per-operation coordination cancellation, generation invalidation, 30-second foreground deadlines, and independent logical completion; verify blocked-before-accessor and blocked-inside-accessor tests return UI recovery without waiting and reject late results.
+- [x] 3.4 Add worker-owned source/destination security-scope leases; verify timed-out workers retain access until actual completion, start/stop calls balance, and another vault can use the remaining slot.
+- [x] 3.5 Integrate explicit loading/pending/recovery state into `AppModel` and `RootView`, including retry saturation and uncertain creation outcomes; verify UI fault cases can cancel, choose another vault, or export without stale alerts/state replacing the current screen.
+- [x] 3.6 Document cancellation guarantees, worker capacity, and lease lifetime in the module interface; verify tests demonstrate the documented distinction between logical cancellation and actual accessor termination.
 
 ## 4. Incremental note loading and safe persistence
 
@@ -65,3 +65,13 @@
 - Strict OpenSpec validation and `git diff --check`: passed.
 - Physical-iPhone Dropbox fixtures, performance traces, actual MetricKit delivery, crash/watchdog/jetsam reports and release archive symbol matching remain pending. Provider calls still execute synchronously until phase 3; phase 6 supplies diagnostic sharing. This change remains awaiting device validation and is not archived.
 - Earlier foundation tasks remain unchecked where their broader requirements (including baseline evidence, marker integration, category/error-chain completeness and device collection) are not fully demonstrated by the prior diagnostic-journal work. Completion of this phase does not mark all runtime-diagnostics requirements implemented.
+
+## Phase 3 validation — 2026-10-08
+
+- Tasks 3.1–3.6 complete (10/34 overall): async vault/bookmark adapters, two global/one-per-root workers, 32 pending requests, explicit priority, one decode lane, foreground deadlines, logical cancellation independent of actual termination, worker-owned leases and recovery UI. See `docs/provider-access.md`.
+- Final AGENTS.md iPhone 17/iOS 26.5 suite: **98 passed, 0 failed, 0 skipped**. Result: `/tmp/flint-derived-data/Logs/Test/Test-Flint-2026.10.08_07-05-45-+1300.xcresult`; log: `/tmp/flint-pr25-navigation-full.txt`. Release simulator build passed in `/tmp/flint-pr25-image-release.txt`. Strict OpenSpec validation and whitespace checks passed.
+- Build identity: app version 1.0/build 1, base `f9ad36a` plus retention before stale navigation rejection; final commit and hosted CI result are recorded in PR #25.
+- Coverage includes blocked coordination/accessors/scope acquisition, retained scopes/slots, saturation/priorities, background budget exclusion, stale vault/note/export/safety results, revision-safe saves, uncertain creations, successful creation followed by discovery/read failure, valid bookmark followed by corrupt content, and typed file/camera late outcomes recovered once in the original note without another asset mutation, overlapping source callback rejection, new-source admission after actual late failure, and creation retry after concurrent navigation.
+- Original hosted CI compiled successfully but failed a three-second cleanup poll in the two-draining-workers test. Tests now await actual scope/slot-release notification with a bounded harness wait; controlled foreground deadlines remain unchanged. CI runs simulator test runners serially. Hosted CI on `f9ad36a` passed (run 37592339875); final creation-retention CI is tracked in PR #25.
+- A local run used a stale UI binary (old `test.retry-save` selector, omitted folder test). Its failure was explained by comparing the runner to current source, then cleaning derived products. The final clean run compiled the current UI tests and passed both cases; no unexplained passing retry was accepted. Added regression failures were observed before applying each fix.
+- Image-outcome recovery is process-local and explicit at the current cursor. Incremental previews/large-note limits, prepared image loading/picker staging, full diagnostic preview/clear-history and physical-iPhone Dropbox/Instruments acceptance remain future phases. The change is not archived.

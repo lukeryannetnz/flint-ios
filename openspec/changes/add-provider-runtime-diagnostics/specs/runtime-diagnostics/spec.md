@@ -191,3 +191,20 @@ A utility timer SHALL inspect a thread-safe action snapshot and schedule at most
 - WHEN the app leaves the foreground and later returns
 - THEN time suspended is excluded from action elapsed time
 - AND stale heartbeat acknowledgments do not create a stall or recovery for suspension
+
+### Requirement: Share a bounded local recovery snapshot
+
+Phase 3 recovery SHALL asynchronously stage one user-initiated sanitized snapshot of journal and platform evidence outside the vault, with a 20 MiB maximum and no automatic upload. Staging SHALL serialize exports, clean temporary data after sharing/cancellation and on next startup, and disclose uncertain correlations, missing evidence and truncation. The complete preview/clear-history workflow remains planned for phase 6.
+
+#### Scenario: Sharing while provider access is blocked
+
+- WHEN recovery requests a snapshot
+- THEN only app-local writers participate
+- AND provider worker saturation cannot delay staging
+- AND failure leaves recovery usable
+
+#### Scenario: Navigation changes while export is staging
+
+- WHEN a diagnostic snapshot finishes after the user changes vault generation or leaves the requesting screen
+- THEN its temporary artifact is cleaned up
+- AND it does not present sharing or an export error on the newer screen

@@ -393,3 +393,24 @@ The system SHALL autosave note edits without displaying a persistent save-status
 - WHEN the editor is shown
 - THEN Flint continues autosaving in the background
 - AND the editor does not display a persistent autosave or saved-status overlay
+
+### Requirement: Programmatic selection does not request navigation
+
+When the browser synchronizes its selection with the model, it SHALL not issue another note read for that same selected URL. Only a different user-requested URL SHALL start navigation; synchronization SHALL not cancel a newer pending read or restore an older selection.
+
+#### Scenario: Initial read overlaps browser appearance
+
+- WHEN the model publishes an initial selection while another explicit note read is pending
+- THEN browser appearance and selection synchronization do not reread the previous note
+- AND the explicit read retains its generation unless the user changes selection
+
+### Requirement: Reconcile pending browser selection
+
+The model SHALL publish pending note selection separately from retained editor content. Failed or cancelled navigation SHALL reset that selection to the retained note, allowing the failed row to be selected again immediately. Late completion SHALL not reset a newer pending selection.
+
+#### Scenario: Retry a failed or cancelled row
+
+- WHEN a note load fails or the user cancels it
+- THEN the browser returns selection to the retained note
+- AND selecting the requested row again starts a fresh read without selecting another row first
+- AND publishing pending selection does not dispatch a duplicate read

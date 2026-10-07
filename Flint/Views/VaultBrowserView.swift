@@ -38,7 +38,7 @@ struct VaultBrowserView: View {
     var body: some View {
         splitView
             .onAppear {
-                selectedNoteURL = model.selectedNote?.url
+                selectedNoteURL = model.requestedNoteURL
                 normalizeFolderPathComponents()
             }
             .onChange(of: browserMode) { _, newValue in
@@ -47,7 +47,7 @@ struct VaultBrowserView: View {
             .onChange(of: model.notes) { _, _ in
                 normalizeFolderPathComponents()
             }
-            .onChange(of: model.selectedNote?.url) { _, newValue in
+            .onChange(of: model.requestedNoteURL) { _, newValue in
                 syncSelectedNoteURL(newValue)
             }
             .onChange(of: selectedNoteURL) { _, newValue in
@@ -68,10 +68,15 @@ struct VaultBrowserView: View {
             }
             .overlay {
                 if model.isBusy {
-                    ProgressView()
-                        .controlSize(.large)
-                        .padding()
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    VStack(spacing: 12) {
+                        ProgressView().controlSize(.large)
+                        if model.isNoteLoading {
+                            Text("Loading note…")
+                            Button("Cancel note loading") { model.cancelNoteLoading() }
+                        }
+                    }
+                    .padding()
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
             }
     }
@@ -139,6 +144,8 @@ struct VaultBrowserView: View {
                 onImportCameraImage: { image in
                     await model.importCameraImage(image)
                 },
+                hasPendingImageImport: model.hasPendingImageImport,
+                onRecoverImageImport: { model.recoverImageImport(for: selectedNote.url) },
                 onSave: {
                     Task {
                         await model.saveCurrentNoteIfNeeded()
@@ -218,10 +225,13 @@ struct VaultBrowserView: View {
     }
 
     private func handleSelectedNoteURLChange(_ newValue: URL?) {
-        guard let newValue, let note = model.notes.first(where: { $0.url == newValue }) else { return }
+        guard let newValue, newValue != model.requestedNoteURL,
+              let note = model.notes.first(where: { $0.url == newValue }) else { return }
 
         Task {
             await model.openNote(note)
+            // A save-before-navigation failure never starts a pending read.
+            if selectedNoteURL == newValue, !model.isNoteLoading { syncSelectedNoteURL(model.requestedNoteURL) }
         }
     }
 
@@ -353,6 +363,8 @@ private struct NoteDocumentView: View {
     @Binding var text: String
     let onImportImageFile: (URL, String?) async -> InsertedNoteImage?
     let onImportCameraImage: (UIImage) async -> InsertedNoteImage?
+    let hasPendingImageImport: Bool
+    let onRecoverImageImport: () -> InsertedNoteImage?
     let onSave: () -> Void
     @State private var isEditing = false
     @State private var formattingState = FlintFormattingState()
@@ -398,6 +410,16 @@ private struct NoteDocumentView: View {
                     Text(note.title)
                         .font(.system(size: 34, weight: .semibold, design: .serif))
                         .foregroundStyle(.primary)
+                }
+
+                if hasPendingImageImport {
+                    Button("Recover image at cursor") {
+                        if let inserted = onRecoverImageImport() {
+                            isEditing = true
+                            pendingCommand = makeCommand(.insertImage(inserted))
+                        }
+                    }
+                    .accessibilityIdentifier("note.image.recover")
                 }
 
                 if isEditing {
