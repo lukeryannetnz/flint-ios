@@ -218,3 +218,14 @@ A successful note creation SHALL retain its destination URL until discovery and 
 - THEN the previous editor retains its text and destination
 - AND the creation busy indicator clears
 - AND the created URL remains available for retry
+
+### Requirement: Recover typed late image outcomes
+
+Actual mutation outcomes SHALL preserve created URLs, complete image-import results and valueless saves as distinct typed values. During the current process, the model SHALL retain timed-out or stale successful imports by their original note URL. Another import for a note with unresolved outcomes SHALL not create a replacement asset. Explicit recovery in that original note SHALL insert the completed result at the current cursor once, without copying or encoding again. A running import SHALL remain pending; an actual failure SHALL permit a new source selection. Navigation SHALL not discard a pending result or insert it into another note. No recovery path SHALL delete a referenced asset. Durable pending-asset reconciliation across relaunch remains part of the later image workflow.
+
+#### Scenario: Image import succeeds after timeout
+
+- WHEN a file or camera import times out and subsequently finishes
+- THEN its full Markdown, asset URL and alt text remain available
+- AND Recover image reuses that completed result without another provider mutation
+- AND switching notes cannot insert the late result into the new note

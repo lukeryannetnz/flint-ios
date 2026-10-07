@@ -144,6 +144,8 @@ struct VaultBrowserView: View {
                 onImportCameraImage: { image in
                     await model.importCameraImage(image)
                 },
+                hasPendingImageImport: model.hasPendingImageImport,
+                onRecoverImageImport: { model.recoverImageImport(for: selectedNote.url) },
                 onSave: {
                     Task {
                         await model.saveCurrentNoteIfNeeded()
@@ -361,6 +363,8 @@ private struct NoteDocumentView: View {
     @Binding var text: String
     let onImportImageFile: (URL, String?) async -> InsertedNoteImage?
     let onImportCameraImage: (UIImage) async -> InsertedNoteImage?
+    let hasPendingImageImport: Bool
+    let onRecoverImageImport: () -> InsertedNoteImage?
     let onSave: () -> Void
     @State private var isEditing = false
     @State private var formattingState = FlintFormattingState()
@@ -406,6 +410,16 @@ private struct NoteDocumentView: View {
                     Text(note.title)
                         .font(.system(size: 34, weight: .semibold, design: .serif))
                         .foregroundStyle(.primary)
+                }
+
+                if hasPendingImageImport {
+                    Button("Recover image at cursor") {
+                        if let inserted = onRecoverImageImport() {
+                            isEditing = true
+                            pendingCommand = makeCommand(.insertImage(inserted))
+                        }
+                    }
+                    .accessibilityIdentifier("note.image.recover")
                 }
 
                 if isEditing {

@@ -9,6 +9,10 @@ final class AppModel: ObservableObject {
         case open(URL, Bool)
         case create(String, URL, ProviderAttempt?, UUID?)
     }
+    private enum PendingImageImport {
+        case attempt(ProviderAttempt, UUID)
+        case completed(InsertedNoteImage)
+    }
     private struct NoteCreationKey: Hashable {
         let name: String
         let folder: [String]
@@ -35,6 +39,7 @@ final class AppModel: ObservableObject {
     @Published var alertMessage: String?
     @Published var diagnosticShare: DiagnosticShareItem?
     @Published private(set) var isExportingDiagnostics = false
+    @Published private(set) var hasPendingImageImport = false
 
     private let bookmarkStore: VaultBookmarkStoring
     private let fileService: VaultFileServing
@@ -53,6 +58,7 @@ final class AppModel: ObservableObject {
     private var autosaveTask: Task<Void, Never>?
     private var saveTask: (id: UUID, task: Task<Void, Never>)?
     private var uncertainSave: UncertainSave?
+    private var pendingImageImports: [URL: [PendingImageImport]] = [:]
     private var completedNoteCreations: [NoteCreationKey: URL] = [:]
     private var uncertainNoteCreation: (name: String, folder: [String], attempt: ProviderAttempt, operation: UUID)?
     private var revision = 0
@@ -100,7 +106,7 @@ final class AppModel: ObservableObject {
                 case .running, nil:
                     recoveryMessage = "Previous creation is still stopping. Its result is not yet known."; return
                 case let .completed(.success(url)):
-                    guard let url else { return }
+                    guard let url = url.url else { return }
                     await openVault(at: url); return
                 case .completed(.failure), .notStarted: break
                 }
@@ -191,6 +197,7 @@ final class AppModel: ObservableObject {
         activeVault = Vault(name: url.lastPathComponent, url: url); notes = discovered
         selectedNote = first; requestedNoteURL = first?.url; noteText = text ?? ""; hasUnsavedChanges = false; revision = 0
         documentGeneration = UUID(); uncertainSave = nil; uncertainNoteCreation = nil; completedNoteCreations = [:]
+        refreshImageImportRecovery()
         stopLoading(generation); phase = .ready
     }
 
@@ -223,6 +230,7 @@ final class AppModel: ObservableObject {
             if documentGeneration == document {
                 isNoteLoading = false; isBusy = false; noteAttempt = nil
                 requestedNoteURL = selectedNote?.url
+                refreshImageImportRecovery()
             }
         }
         do {
@@ -250,7 +258,7 @@ final class AppModel: ObservableObject {
                 switch uncertain.attempt.mutationOutcome(uncertain.operation) {
                 case .running, nil: alertMessage = "Previous note creation is still stopping. Please wait before retrying."; return
                 case let .completed(.success(existing)):
-                    guard let existing else { return }; url = existing; uncertainNoteCreation = nil
+                    guard let existing = existing.url else { return }; url = existing; uncertainNoteCreation = nil
                 case .completed(.failure), .notStarted:
                     uncertainNoteCreation = nil
                     url = try await fileService.createNote(named: name, in: folder, request: request)
@@ -327,33 +335,78 @@ final class AppModel: ObservableObject {
     }
 
     func importImage(from sourceURL: URL, preferredFilename: String? = nil) async -> InsertedNoteImage? {
-        guard let note = selectedNote, let root = activeVault?.url else { return nil }
+        guard let note = selectedNote, let root = activeVault?.url, canStartImageImport(for: note.url) else { return nil }
+        return await performImageImport(note: note, root: root) { request in
+            try await self.fileService.importImage(from: sourceURL, preferredFilename: preferredFilename,
+                into: note.url, vaultURL: root, request: request)
+        }
+    }
+
+    func importCameraImage(_ image: UIImage) async -> InsertedNoteImage? {
+        guard let note = selectedNote, let root = activeVault?.url, canStartImageImport(for: note.url) else { return nil }
+        return await performImageImport(note: note, root: root) { request in
+            try await self.fileService.importCameraImage(image, into: note.url, vaultURL: root, request: request)
+        }
+    }
+
+    private func canStartImageImport(for noteURL: URL) -> Bool {
+        guard pendingImageImports[noteURL]?.isEmpty != false else {
+            alertMessage = "A previous image import has an unresolved result. Use Recover image before selecting another source."
+            return false
+        }
+        return true
+    }
+
+    private func performImageImport(note: NoteItem, root: URL,
+        work: (ProviderRequest) async throws -> InsertedNoteImage) async -> InsertedNoteImage? {
         let document = documentGeneration, vault = vaultGeneration
         let request = ProviderRequest(vaultURL: root, attempt: attemptFactory())
         isBusy = true; defer { if documentGeneration == document { isBusy = false } }
         do {
-            let inserted = try await fileService.importImage(from: sourceURL, preferredFilename: preferredFilename,
-                into: note.url, vaultURL: root, request: request)
-            guard documentGeneration == document, vaultGeneration == vault else { return nil }
+            let inserted = try await work(request)
+            guard documentGeneration == document, vaultGeneration == vault else {
+                retainImageImport(.completed(inserted), for: note.url); return nil
+            }
             return inserted
         } catch {
+            if let failure = error as? ProviderFailure, failure.uncertainMutation {
+                retainImageImport(.attempt(request.attempt, failure.operationID), for: note.url)
+            }
             guard documentGeneration == document, vaultGeneration == vault else { return nil }
             alertMessage = error.localizedDescription; return nil
         }
     }
 
-    func importCameraImage(_ image: UIImage) async -> InsertedNoteImage? {
-        guard let note = selectedNote, let root = activeVault?.url else { return nil }
-        let document = documentGeneration, vault = vaultGeneration
-        let request = ProviderRequest(vaultURL: root, attempt: attemptFactory())
-        isBusy = true; defer { if documentGeneration == document { isBusy = false } }
-        do {
-            let inserted = try await fileService.importCameraImage(image, into: note.url, vaultURL: root, request: request)
-            guard documentGeneration == document, vaultGeneration == vault else { return nil }
-            return inserted
-        } catch {
-            guard documentGeneration == document, vaultGeneration == vault else { return nil }
-            alertMessage = error.localizedDescription; return nil
+    private func retainImageImport(_ pending: PendingImageImport, for noteURL: URL) {
+        pendingImageImports[noteURL, default: []].append(pending)
+        refreshImageImportRecovery()
+    }
+
+    private func refreshImageImportRecovery() {
+        hasPendingImageImport = selectedNote.map { pendingImageImports[$0.url]?.isEmpty == false } ?? false
+    }
+
+    func recoverImageImport(for noteURL: URL) -> InsertedNoteImage? {
+        guard selectedNote?.url == noteURL, let pending = pendingImageImports[noteURL]?.first else { return nil }
+        let result: Result<InsertedNoteImage, Error>
+        switch pending {
+        case let .completed(image): result = .success(image)
+        case let .attempt(attempt, operation):
+            switch attempt.mutationOutcome(operation) {
+            case .running, nil:
+                alertMessage = "The previous image import is still stopping. Try recovery again when it finishes."
+                return nil
+            case let .completed(.success(.image(image))): result = .success(image)
+            case let .completed(.failure(error)): result = .failure(error)
+            case .notStarted, .completed(.success): result = .failure(CocoaError(.fileReadUnknown))
+            }
+        }
+        pendingImageImports[noteURL]?.removeFirst()
+        if pendingImageImports[noteURL]?.isEmpty == true { pendingImageImports.removeValue(forKey: noteURL) }
+        refreshImageImportRecovery()
+        switch result {
+        case let .success(image): alertMessage = nil; return image
+        case .failure: alertMessage = "The previous import failed. Select the image again."; return nil
         }
     }
 
@@ -382,7 +435,7 @@ final class AppModel: ObservableObject {
         loadingAttempt?.cancel(); noteAttempt?.cancel(); noteAttempt = nil
         autosaveTask?.cancel(); autosaveTask = nil
         activeLease = nil; activeVault = nil; notes = []; selectedNote = nil; requestedNoteURL = nil; noteText = ""
-        completedNoteCreations = [:]
+        completedNoteCreations = [:]; hasPendingImageImport = false
         hasUnsavedChanges = false; isNoteLoading = false; alertMessage = nil
         vaultGeneration = UUID(); documentGeneration = UUID(); recoveryTarget = target
         loadingAttempt = attempt; phase = .loading; isBusy = true; isSlow = false

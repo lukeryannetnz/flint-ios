@@ -39,7 +39,11 @@ final class ForegroundClock {
 }
 
 final class ProviderAttempt {
-    enum MutationOutcome { case running, notStarted, completed(Result<URL?, Error>) }
+    enum MutationValue {
+        case createdURL(URL), image(InsertedNoteImage), noValue
+        var url: URL? { if case let .createdURL(url) = self { return url }; return nil }
+    }
+    enum MutationOutcome { case running, notStarted, completed(Result<MutationValue, Error>) }
     let id = UUID()
     private let clock: ForegroundClock
     private let origin: Double
@@ -200,7 +204,11 @@ private final class TypedProviderJob<T>: ProviderJob {
     override func execute() -> () -> Void {
         let result: Result<T, Error> = Result { try context.checkCancellation(); return try work(context) }
         if case let .failure(error) = result { actualError = error }
-        if mutation { request.attempt.mutation(id, outcome: .completed(result.map { $0 as? URL })) }
+        if mutation { request.attempt.mutation(id, outcome: .completed(result.map { value in
+            if let url = value as? URL { return .createdURL(url) }
+            if let image = value as? InsertedNoteImage { return .image(image) }
+            return .noValue
+        })) }
         return { self.continuation.resume(with: result) }
     }
     override func fail(_ reason: ProviderFailure.Reason) -> () -> Void {

@@ -50,7 +50,7 @@ final class ProviderExecutorTests: XCTestCase {
             XCTAssertEqual(counts.started, counts.stopped)
             switch attempt.mutationOutcome(failure.operationID) {
             case .completed(.failure) where before: break
-            case let .completed(.success(url)) where !before: XCTAssertEqual(url, value)
+            case let .completed(.success(url)) where !before: XCTAssertEqual(url.url, value)
             default: XCTFail("Actual mutation outcome must remain available")
             }
             let data: Data = await withCheckedContinuation { continuation in log.snapshot { continuation.resume(returning: $0) } }

@@ -325,6 +325,61 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.selectedNote?.url, root.appendingPathComponent("Created.md"))
     }
 
+    func testLateFileAndCameraImportsRecoverOnceWithoutCreatingAnotherAssetOrCrossingNotes() async throws {
+        for camera in [false, true] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let note = makeNote(title: "Original", url: root.appendingPathComponent("Original.md"))
+            let asset = root.appendingPathComponent("Imported.png")
+            let inserted = InsertedNoteImage(markdownSource: "![Imported](Imported.png)", assetURL: asset, altText: "Imported")
+            let time = ModelTestTime(), clock = ForegroundClock(clock: { time.now })
+            let gate = DispatchSemaphore(value: 0); defer { gate.signal() }
+            let entered = expectation(description: "import accessor blocked")
+            let drained = expectation(description: "import worker actually returned")
+            let executor = ProviderExecutor(automaticSampling: false, startScope: { _ in false }, workerDidFinish: { drained.fulfill() })
+            // Bootstrap scopes use a different executor so only the import fulfills this lifecycle expectation.
+            let scopes = ProviderExecutor(startScope: { _ in false })
+            let files = FileServiceSpy(); files.notesToReturn = [note]
+            let importWork: (ProviderRequest) async throws -> InsertedNoteImage = { request in
+                try await executor.execute(request, step: .imageImport, mutation: true) { _ in
+                    try Data("completed asset".utf8).write(to: asset)
+                    entered.fulfill(); gate.wait(); return inserted
+                }
+            }
+            files.imageImportHook = { request in try await importWork(request) }
+            let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files, restorationSafety: RestorationSafetySpy(),
+                executor: scopes, attemptFactory: { ProviderAttempt(clock: clock) })
+            await model.openVault(at: root)
+            let source = root.appendingPathComponent("Source.png")
+            let importTask = Task { camera ? await model.importCameraImage(UIImage()) : await model.importImage(from: source) }
+            await fulfillment(of: [entered], timeout: 2)
+            time.advance(30); executor.sample()
+            let early = await importTask.value
+            XCTAssertNil(early); XCTAssertTrue(model.hasPendingImageImport)
+            XCTAssertNil(model.recoverImageImport(for: note.url))
+            let duplicate = await model.importImage(from: source)
+            XCTAssertNil(duplicate)
+            XCTAssertEqual(files.importedImages.count + files.importedCameraImages.count, 1)
+            let otherRoot = root.appendingPathComponent("OtherVault")
+            let other = makeNote(title: "Other", url: otherRoot.appendingPathComponent("Other.md"))
+            files.notesToReturn = [other]
+            await model.openVault(at: otherRoot)
+            XCTAssertFalse(model.hasPendingImageImport)
+            gate.signal(); await fulfillment(of: [drained], timeout: 20)
+            XCTAssertNil(model.recoverImageImport(for: note.url))
+            XCTAssertEqual(model.selectedNote?.url, other.url); XCTAssertNil(model.alertMessage)
+            files.notesToReturn = [note]
+            await model.openVault(at: root)
+            XCTAssertTrue(model.hasPendingImageImport)
+            XCTAssertEqual(model.recoverImageImport(for: note.url), inserted)
+            XCTAssertFalse(model.hasPendingImageImport)
+            XCTAssertNil(model.recoverImageImport(for: note.url))
+            XCTAssertEqual(files.importedImages.count + files.importedCameraImages.count, 1)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: asset.path))
+        }
+    }
+
     private func modelWait(_ predicate: () -> Bool) async {
         let deadline = Date().addingTimeInterval(3)
         while !predicate() && Date() < deadline { try? await Task.sleep(for: .milliseconds(2)) }
@@ -832,6 +887,7 @@ private final class FileServiceSpy: VaultFileServing {
     var savedNotes: [(String, URL)] = []
     var noteContents: [URL: String] = [:]
     var readNoteCalls: [URL] = []
+    var imageImportHook: ((ProviderRequest) async throws -> InsertedNoteImage)?
     var importedImages: [(URL, String?, URL, URL)] = []
     var importedCameraImages: [(UIImage, URL, URL)] = []
 
@@ -871,6 +927,7 @@ private final class FileServiceSpy: VaultFileServing {
 
     func importImage(from sourceURL: URL, preferredFilename: String?, into noteURL: URL, vaultURL: URL, request: ProviderRequest) async throws -> InsertedNoteImage {
         importedImages.append((sourceURL, preferredFilename, noteURL, vaultURL))
+        if let imageImportHook { return try await imageImportHook(request) }
         return InsertedNoteImage(
             markdownSource: "![Imported](Daily Assets/imported.jpg)",
             assetURL: noteURL.deletingLastPathComponent().appendingPathComponent("Daily Assets/imported.jpg"),
@@ -880,6 +937,7 @@ private final class FileServiceSpy: VaultFileServing {
 
     func importCameraImage(_ image: UIImage, into noteURL: URL, vaultURL: URL, request: ProviderRequest) async throws -> InsertedNoteImage {
         importedCameraImages.append((image, noteURL, vaultURL))
+        if let imageImportHook { return try await imageImportHook(request) }
         return InsertedNoteImage(
             markdownSource: "![Camera](Daily Assets/camera.jpg)",
             assetURL: noteURL.deletingLastPathComponent().appendingPathComponent("Daily Assets/camera.jpg"),
