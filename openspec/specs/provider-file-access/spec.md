@@ -43,7 +43,7 @@ The system SHALL expose cancellable loading, a slow state after 5 seconds, and a
 
 ### Requirement: Discover notes without eagerly reading all content
 
-The system SHALL discover note metadata incrementally without eagerly reading content, preserve supported file filters and sort rules, and publish usable partial results. Previews SHALL be demand-driven with bounded reads and caching. Progress SHALL report observed counts and stages without inventing a total or download percentage. Each discovery batch SHALL contain at most 64 notes and examine at most 256 entries, release its worker slot between batches, and admit explicit reads ahead of optional continuation work. Metadata failures SHALL be diagnosed and mark discovery incomplete without removing usable results.
+The system SHALL discover note metadata incrementally without eagerly reading content, preserve supported file filters and sort rules, and publish usable partial results. Previews SHALL be demand-driven with bounded reads and caching. Progress SHALL report observed counts and stages without inventing a total or download percentage. Automatic discovery continuation and visible preview requests SHALL not acquire the vault lane before the initial selected-content read has completed logically, including while restoration safety completion awaits. Each discovery batch SHALL contain at most 64 notes and examine at most 256 entries, release its worker slot between batches, and admit explicit reads ahead of optional continuation work. Metadata failures SHALL be diagnosed and mark discovery incomplete without removing usable results.
 
 #### Scenario: A complete refresh supersedes an older discovery
 
@@ -198,6 +198,13 @@ Vault-file methods SHALL accept a request carrying vault-root identity, foregrou
 ### Requirement: Keep uncertain mutations separate from retries
 
 The executor SHALL retain an actual mutation outcome for the owning attempt after logical timeout or cancellation. A retry SHALL first establish whether the original write/create finished, without issuing another mutation while it drains. Saves SHALL snapshot their original text, destination and revision; an asynchronous completion SHALL not clear newer edits. Navigation SHALL first save dirty text and remain at its original destination if saving cannot be established. Explicit retain/discard recovery storage is added in phase 4.
+
+#### Scenario: A late save is confirmed successful
+
+- WHEN an uncertain save later has an actual successful result
+- THEN its note preview and visible demand are invalidated as for an ordinary success
+- AND metadata finalization uses a fresh foreground attempt rather than the expired mutation attempt
+- AND newer dirty revisions remain eligible for ordered persistence
 
 #### Scenario: Creation finishes after its deadline
 

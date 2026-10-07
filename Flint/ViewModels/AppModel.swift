@@ -53,6 +53,8 @@ final class AppModel: ObservableObject {
     private var didBootstrap = false
     private var vaultGeneration = UUID()
     private var documentGeneration = UUID()
+    private var metadataGeneration = UUID()
+    private var initialContentPending = false
     private var navigationGeneration = UUID()
     private var activeLease: SecurityScopeLease?
     private var loadingAttempt: ProviderAttempt?
@@ -211,14 +213,21 @@ final class AppModel: ObservableObject {
         selectedNote = nil; requestedNoteURL = nil; failedNoteURL = nil; noteText = ""; hasUnsavedChanges = false; revision = 0
         documentGeneration = UUID(); uncertainSave = nil; uncertainNoteCreation = nil; completedNoteCreations = [:]
         refreshImageImportRecovery()
+        initialContentPending = !notes.isEmpty
         stopLoading(generation); phase = .ready
         discoveryState = batch.cursor != nil ? .loading : batch.incomplete ? .incomplete : .complete
-        if let cursor = batch.cursor {
-            startDiscovery(root: url, cursor: cursor, seen: Set(notes.map(\.url)), incomplete: batch.incomplete, generation: generation)
-        }
-        // Publish a usable browser before awaiting the initial document. Later batches never auto-select.
+        metadataGeneration = UUID(); let metadata = metadataGeneration
+        let initiallySeen = Set(notes.map(\.url))
+        // Publish the browser, but admit initial content before optional continuation can take its lane.
         if let first = notes.first { await openNote(first, initialAttempt: attempt, onStarted: onUsable) }
         else { await onUsable?() }
+        guard vaultGeneration == generation else { return }
+        initialContentPending = false
+        previewEpoch = UUID(); previewRevision += 1
+        guard metadataGeneration == metadata else { return }
+        if let cursor = batch.cursor {
+            startDiscovery(root: url, cursor: cursor, seen: initiallySeen, incomplete: batch.incomplete, generation: generation)
+        }
     }
 
     private func mergeMetadata(_ discovered: [NoteItem]) {
@@ -234,6 +243,7 @@ final class AppModel: ObservableObject {
 
     private func acceptCompleteMetadata(_ refreshed: [NoteItem]) {
         // A full listing is authoritative; an older cursor must never prune its newer URLs.
+        metadataGeneration = UUID()
         discoveryAttempt?.cancel(); discoveryAttempt = nil
         discoveryTask?.cancel(); discoveryTask = nil
         mergeMetadata(refreshed)
@@ -297,6 +307,7 @@ final class AppModel: ObservableObject {
 
     func retryDiscovery() {
         guard let root = activeVault?.url else { return }
+        metadataGeneration = UUID()
         clearPreviews()
         startDiscovery(root: root, cursor: nil, seen: [], incomplete: false, generation: vaultGeneration, reconcileSelection: true)
     }
@@ -311,7 +322,7 @@ final class AppModel: ObservableObject {
     }
 
     func loadPreview(for note: NoteItem) async {
-        guard let root = activeVault?.url, notes.contains(note) else { return }
+        guard !initialContentPending, let root = activeVault?.url, notes.contains(note) else { return }
         if let existing = previewRequests[note.url] {
             guard existing.attempt.cancelled else { return }
             previewRequests.removeValue(forKey: note.url)
@@ -451,6 +462,16 @@ final class AppModel: ObservableObject {
             case .completed(.success):
                 if documentGeneration == uncertain.document, revision == uncertain.revision { hasUnsavedChanges = false }
                 uncertainSave = nil
+                invalidatePreview(note.url)
+                let document = documentGeneration, vault = vaultGeneration
+                let request = ProviderRequest(vaultURL: root, attempt: attemptFactory())
+                let confirmation = Task { [self] in
+                    await refreshMetadataAfterSave(root: root, noteURL: note.url, request: request, document: document, vault: vault)
+                }
+                let confirmationID = UUID(); saveTask = (confirmationID, confirmation)
+                await confirmation.value
+                if saveTask?.id == confirmationID { saveTask = nil }
+                guard documentGeneration == document, vaultGeneration == vault, selectedNote?.url == note.url else { return }
                 if !hasUnsavedChanges { return }
             case .completed(.failure), .notStarted: uncertainSave = nil
             }
@@ -464,13 +485,7 @@ final class AppModel: ObservableObject {
                 guard vaultGeneration == vault, documentGeneration == document, selectedNote?.url == note.url else { return }
                 if revision == savedRevision { hasUnsavedChanges = false }
                 invalidatePreview(note.url)
-                // A refresh failure is optional metadata failure, not a failed write.
-                do {
-                    let refreshed = try await fileService.listMarkdownNotes(in: root, request: request)
-                    guard vaultGeneration == vault, documentGeneration == document else { return }
-                    acceptCompleteMetadata(refreshed)
-                    if let selected = notes.first(where: { $0.url == note.url }) { selectedNote = selected }
-                } catch { DebugLog.shared.begin(.metadata).finish(.failure, error: error) }
+                await refreshMetadataAfterSave(root: root, noteURL: note.url, request: request, document: document, vault: vault)
             } catch {
                 guard vaultGeneration == vault, documentGeneration == document else { return }
                 if let failure = error as? ProviderFailure, failure.uncertainMutation {
@@ -483,6 +498,16 @@ final class AppModel: ObservableObject {
         await task.value
         if saveTask?.id == saveID { saveTask = nil }
         if hasUnsavedChanges && uncertainSave == nil && revision != savedRevision { scheduleAutosave() }
+    }
+
+    private func refreshMetadataAfterSave(root: URL, noteURL: URL, request: ProviderRequest, document: UUID, vault: UUID) async {
+        // Optional metadata failure never turns a confirmed write into a failed-save claim.
+        do {
+            let refreshed = try await fileService.listMarkdownNotes(in: root, request: request)
+            guard vaultGeneration == vault, documentGeneration == document, selectedNote?.url == noteURL else { return }
+            acceptCompleteMetadata(refreshed)
+            if let selected = notes.first(where: { $0.url == noteURL }) { selectedNote = selected }
+        } catch { DebugLog.shared.begin(.metadata).finish(.failure, error: error) }
     }
 
     func importImage(from sourceURL: URL, preferredFilename: String? = nil) async -> InsertedNoteImage? {
@@ -604,7 +629,7 @@ final class AppModel: ObservableObject {
     private func beginLoading(_ attempt: ProviderAttempt, target: RecoveryTarget) -> UUID {
         loadingAttempt?.cancel(); noteAttempt?.cancel(); noteAttempt = nil
         discoveryAttempt?.cancel(); discoveryAttempt = nil; discoveryTask?.cancel(); discoveryTask = nil
-        discoveryState = .idle; clearPreviews()
+        metadataGeneration = UUID(); initialContentPending = false; discoveryState = .idle; clearPreviews()
         autosaveTask?.cancel(); autosaveTask = nil
         activeLease = nil; activeVault = nil; notes = []; selectedNote = nil; requestedNoteURL = nil; failedNoteURL = nil; noteText = ""
         completedNoteCreations = [:]; hasPendingImageImport = false
