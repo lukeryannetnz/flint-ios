@@ -150,6 +150,58 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.selectedNote?.url, created)
     }
 
+    func testExplicitRefreshReconcilesMissingCleanSelectionOrClearsEmptyVault() async {
+        for hasRemainingNote in [true, false] {
+            let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/deleted-selection")
+            let old = makeNote(title: "Alpha", url: root.appendingPathComponent("Alpha.md"))
+            let next = makeNote(title: "Beta", url: root.appendingPathComponent("Beta.md"))
+            files.notesToReturn = [old, next]; files.noteContents[old.url] = "Old text"; files.noteContents[next.url] = "Next text"
+            let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+            await model.openVault(at: root)
+            files.notesToReturn = hasRemainingNote ? [next] : []
+            model.retryDiscovery()
+            await modelWait { model.discoveryState == .complete && model.selectedNote?.url != old.url && !model.isNoteLoading }
+            XCTAssertEqual(model.selectedNote?.url, hasRemainingNote ? next.url : nil)
+            XCTAssertEqual(model.requestedNoteURL, hasRemainingNote ? next.url : nil)
+            XCTAssertEqual(model.noteText, hasRemainingNote ? "Next text" : "")
+            XCTAssertFalse(model.hasUnsavedChanges); XCTAssertTrue(files.savedNotes.isEmpty)
+        }
+    }
+
+    func testExplicitRefreshRetainsDirtyTextForMissingDestination() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/deleted-dirty-selection")
+        let old = makeNote(title: "Alpha", url: root.appendingPathComponent("Alpha.md"))
+        let next = makeNote(title: "Beta", url: root.appendingPathComponent("Beta.md"))
+        files.notesToReturn = [old, next]
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        await model.openVault(at: root)
+        files.saveHook = { _, _, _ in throw VaultError.noteMissing }
+        model.updateNoteText("Retained unsaved text")
+        files.notesToReturn = [next]
+        model.retryDiscovery(); await modelWait { model.discoveryState == .complete }
+        XCTAssertEqual(model.selectedNote?.url, old.url); XCTAssertEqual(model.noteText, "Retained unsaved text")
+        XCTAssertTrue(model.hasUnsavedChanges); XCTAssertNotNil(model.alertMessage)
+        XCTAssertFalse(files.savedNotes.contains { $0.1 == next.url })
+    }
+
+    func testExplicitRefreshCannotOverrideSelectionChangedWhileAwaitingMetadata() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/refresh-newer-selection")
+        let old = makeNote(title: "Alpha", url: root.appendingPathComponent("Alpha.md"))
+        let fallback = makeNote(title: "Beta", url: root.appendingPathComponent("Beta.md"))
+        let chosen = makeNote(title: "Chosen", url: root.appendingPathComponent("Chosen.md"))
+        files.notesToReturn = [old, fallback, chosen]
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        await model.openVault(at: root)
+        var release: CheckedContinuation<NoteDiscoveryBatch, Error>?
+        files.discoveryHook = { _, _, _ in try await withCheckedThrowingContinuation { release = $0 } }
+        model.retryDiscovery(); await modelWait { release != nil }
+        await model.openNote(chosen)
+        release?.resume(returning: NoteDiscoveryBatch(notes: [fallback, chosen], cursor: nil))
+        await modelWait { model.discoveryState == .complete }
+        XCTAssertEqual(model.selectedNote, chosen); XCTAssertEqual(model.requestedNoteURL, chosen.url)
+        XCTAssertEqual(files.readNoteCalls, [old.url, chosen.url])
+    }
+
     func testEmptyIntermediateBatchDoesNotDeclareEmptyVault() async {
         let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/empty-batch")
         let note = makeNote(title: "Found", url: root.appendingPathComponent("Found.md"))

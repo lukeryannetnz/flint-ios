@@ -241,8 +241,10 @@ final class AppModel: ObservableObject {
         discoveryState = .complete
     }
 
-    private func startDiscovery(root: URL, cursor: NoteDiscoveryCursor?, seen: Set<URL>, incomplete: Bool, generation: UUID) {
+    private func startDiscovery(root: URL, cursor: NoteDiscoveryCursor?, seen: Set<URL>, incomplete: Bool, generation: UUID,
+                                reconcileSelection: Bool = false) {
         discoveryAttempt?.cancel(); discoveryTask?.cancel()
+        let startingDocument = documentGeneration
         let attempt = attemptFactory(); discoveryAttempt = attempt
         discoveryState = .loading
         discoveryTask = Task { [weak self] in
@@ -261,6 +263,10 @@ final class AppModel: ObservableObject {
                 guard vaultGeneration == generation, discoveryAttempt === attempt else { return }
                 if !incomplete { notes.removeAll { !seen.contains($0.url) } }
                 discoveryState = incomplete ? .incomplete : .complete
+                if !incomplete, reconcileSelection {
+                    discoveryAttempt = nil; discoveryTask = nil
+                    await reconcileRefreshedSelection(document: startingDocument)
+                }
             } catch {
                 guard vaultGeneration == generation, discoveryAttempt === attempt else { return }
                 discoveryState = .incomplete
@@ -270,10 +276,29 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func reconcileRefreshedSelection(document: UUID) async {
+        guard documentGeneration == document, !isNoteLoading else { return }
+        if let selectedNote, let updated = notes.first(where: { $0.url == selectedNote.url }) {
+            self.selectedNote = updated
+            return
+        }
+        guard !hasUnsavedChanges else {
+            alertMessage = VaultError.noteMissing.localizedDescription
+            return
+        }
+        // Only a clean document can be discarded; all later work loses the old destination generation.
+        documentGeneration = UUID(); navigationGeneration = UUID()
+        autosaveTask?.cancel(); autosaveTask = nil
+        selectedNote = nil; requestedNoteURL = nil; failedNoteURL = nil
+        noteText = ""; revision = 0; uncertainSave = nil; isBusy = false
+        refreshImageImportRecovery()
+        if let first = notes.first { await openNote(first) }
+    }
+
     func retryDiscovery() {
         guard let root = activeVault?.url else { return }
         clearPreviews()
-        startDiscovery(root: root, cursor: nil, seen: [], incomplete: false, generation: vaultGeneration)
+        startDiscovery(root: root, cursor: nil, seen: [], incomplete: false, generation: vaultGeneration, reconcileSelection: true)
     }
 
     func previewDemand(for note: NoteItem) -> NotePreviewDemand {

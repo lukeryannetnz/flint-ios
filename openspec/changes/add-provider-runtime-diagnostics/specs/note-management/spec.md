@@ -4,7 +4,7 @@
 
 The system SHALL select a note automatically when notes exist and no current selection can be preserved.
 
-Note-list refresh SHALL update metadata without launching background navigation tasks. Vault opening SHALL establish a selection or pending-content state before returning usable metadata; content loads SHALL be explicit, cancellable, and tied to the current selection generation. Note creation SHALL open only its created note, and metadata refresh after saving SHALL NOT launch fallback navigation.
+Automatic note-list continuation and save metadata refresh SHALL update metadata without launching background navigation tasks. Explicit user-requested discovery refresh SHALL reconcile a missing clean selection at completion, opening the first remaining note or clearing the editor for an empty vault, only if the selection generation is unchanged. Missing destinations with unsaved text SHALL retain that text and report the failure instead of discarding it or redirecting a write. Vault opening SHALL establish a selection or pending-content state before returning usable metadata; content loads SHALL be explicit, cancellable, and tied to the current selection generation. Note creation SHALL open only its created note, and metadata refresh after saving SHALL NOT launch fallback navigation.
 
 #### Scenario: Open another vault
 
@@ -93,3 +93,10 @@ The browser SHALL distinguish discovery in progress, incomplete discovery with r
 - WHEN a later batch fails
 - THEN previously discovered notes remain visible and selectable
 - AND the browser offers discovery retry instead of showing an empty-vault success
+
+#### Scenario: Selected file is removed outside Flint
+
+- WHEN explicit discovery refresh establishes that the selected file is absent
+- THEN an unchanged clean selection opens the first remaining note or clears the editor if none remain
+- AND a later user selection takes precedence
+- AND unsaved text for the missing destination is retained with a recoverable error
