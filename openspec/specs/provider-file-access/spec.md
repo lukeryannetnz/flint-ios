@@ -43,14 +43,16 @@ The system SHALL expose cancellable loading, a slow state after 5 seconds, and a
 
 ### Requirement: Discover notes without eagerly reading all content
 
-The system SHALL discover note metadata incrementally without eagerly reading content, preserve supported file filters and sort rules, and publish usable partial results. Previews SHALL be demand-driven with bounded reads and caching. Progress SHALL report observed counts and stages without inventing a total or download percentage.
+The system SHALL discover note metadata incrementally without eagerly reading content, preserve supported file filters and sort rules, and publish usable partial results. Previews SHALL be demand-driven with bounded reads and caching. Progress SHALL report observed counts and stages without inventing a total or download percentage. Each discovery batch SHALL contain at most 64 notes and examine at most 256 entries, release its worker slot between batches, and admit explicit reads ahead of optional continuation work. Metadata failures SHALL be diagnosed and mark discovery incomplete without removing usable results.
 
 #### Scenario: Bound preview work
 
 - WHEN visible or recently requested notes need previews
 - THEN each preview reads no more than 64 KiB of source and decodes only complete UTF-8 sequences
 - AND omitted, truncated, and unavailable previews are distinguishable
-- AND the preview cache stays within 4 MiB and invalidates on observed content-version changes or explicit refresh
+- AND the preview cache stays within 4 MiB and invalidates on observed content-version changes, successful saves, or explicit refresh
+- AND offscreen preview demand is cancelled and stale preview results cannot replace a newer version
+- AND an empty successful source is distinguished from a preview omitted before demand
 - AND discovery preserves regular-file filtering, hidden-file exclusion, supported extensions, relative paths, and existing sort rules
 
 #### Scenario: One provider item is unavailable
@@ -103,6 +105,12 @@ The system SHALL capture destination, access lease, text revision, and operation
 ### Requirement: Bound editable note content
 
 The system SHALL limit a single editable note read to 8 MiB of source bytes, enforce the limit during the read even when size metadata is absent, and report an oversized note as a recoverable read failure. It SHALL NOT silently truncate editable markdown or permit saving a partial read over its source. Markdown preparation SHALL not synchronously read referenced assets.
+
+#### Scenario: Missing or stale size metadata
+
+- WHEN size metadata is missing or a source grows after discovery
+- THEN reads still enforce the 8 MiB limit from actual bytes using bounded chunks
+- AND invalid UTF-8 or an interrupted read never becomes an editable document
 
 #### Scenario: Large or growing provider note
 

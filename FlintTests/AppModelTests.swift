@@ -30,6 +30,218 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(files.readNoteCalls.contains(first.url))
     }
 
+    func testBrowserAppearsBeforeInitialContentAndLaterBatchesDoNotOverrideUserSelection() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/incremental-vault")
+        let first = makeNote(title: "First", url: root.appendingPathComponent("First.md"))
+        let second = makeNote(title: "Second", url: root.appendingPathComponent("Second.md"))
+        var newest = makeNote(title: "Newest", url: root.appendingPathComponent("Newest.md"))
+        newest = NoteItem(url: newest.url, title: newest.title, relativePath: newest.relativePath,
+            folderPath: "", folderName: "Vault", previewMarkdown: "", createdAt: .now, lastModifiedAt: .distantFuture)
+        var contentRelease: CheckedContinuation<String, Error>?
+        var batchRelease: CheckedContinuation<NoteDiscoveryBatch, Error>?
+        files.discoveryHook = { _, cursor, _ in
+            if cursor == nil { return NoteDiscoveryBatch(notes: [first, second], cursor: NoteDiscoveryCursor()) }
+            return try await withCheckedThrowingContinuation { batchRelease = $0 }
+        }
+        files.readHook = { url, _ in
+            if url == first.url { return try await withCheckedThrowingContinuation { contentRelease = $0 } }
+            return "Current content"
+        }
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        let opening = Task { await model.openVault(at: root) }
+        await modelWait { contentRelease != nil && batchRelease != nil }
+        XCTAssertEqual(model.phase, .ready); XCTAssertEqual(model.notes.count, 2)
+        XCTAssertTrue(model.isNoteLoading); XCTAssertNil(model.selectedNote)
+        XCTAssertEqual(model.requestedNoteURL, first.url)
+        model.updateNoteText("placeholder edit")
+        XCTAssertEqual(model.noteText, ""); XCTAssertFalse(model.hasUnsavedChanges)
+        await model.openNote(second)
+        batchRelease?.resume(returning: NoteDiscoveryBatch(notes: [newest], cursor: nil))
+        contentRelease?.resume(returning: "Obsolete content"); await opening.value
+        await modelWait { model.discoveryState == .complete }
+        XCTAssertEqual(model.notes.first?.url, newest.url)
+        XCTAssertEqual(model.selectedNote?.url, second.url); XCTAssertEqual(model.noteText, "Current content")
+        XCTAssertEqual(files.readNoteCalls, [first.url, second.url]); XCTAssertTrue(files.previewCalls.isEmpty)
+        XCTAssertTrue(files.savedNotes.isEmpty)
+    }
+
+    func testPartialDiscoveryFailureKeepsNotesAndRetryDoesNotNavigate() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/partial-vault")
+        let note = makeNote(title: "Available", url: root.appendingPathComponent("Available.md"))
+        files.discoveryHook = { _, cursor, _ in
+            if cursor == nil { return NoteDiscoveryBatch(notes: [note], cursor: NoteDiscoveryCursor()) }
+            throw CocoaError(.fileReadNoPermission)
+        }
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        await model.openVault(at: root)
+        await modelWait { model.discoveryState == .incomplete }
+        XCTAssertEqual(model.phase, .ready); XCTAssertEqual(model.notes, [note]); XCTAssertEqual(model.selectedNote, note)
+        let reads = files.readNoteCalls
+        files.discoveryHook = { _, _, _ in NoteDiscoveryBatch(notes: [note], cursor: nil) }
+        model.retryDiscovery()
+        await modelWait { model.discoveryState == .complete }
+        XCTAssertEqual(files.readNoteCalls, reads); XCTAssertEqual(model.selectedNote, note)
+    }
+
+    func testLateDiscoveryBatchCannotReplaceAnotherVault() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/old-discovery")
+        let nextRoot = URL(fileURLWithPath: "/tmp/new-discovery")
+        let old = makeNote(title: "Old", url: root.appendingPathComponent("Old.md"))
+        let next = makeNote(title: "Next", url: nextRoot.appendingPathComponent("Next.md"))
+        var release: CheckedContinuation<NoteDiscoveryBatch, Error>?
+        files.discoveryHook = { url, cursor, _ in
+            if url == nextRoot { return NoteDiscoveryBatch(notes: [next], cursor: nil) }
+            if cursor == nil { return NoteDiscoveryBatch(notes: [old], cursor: NoteDiscoveryCursor()) }
+            return try await withCheckedThrowingContinuation { release = $0 }
+        }
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        await model.openVault(at: root); await modelWait { release != nil }
+        await model.openVault(at: nextRoot)
+        release?.resume(returning: NoteDiscoveryBatch(notes: [old], cursor: nil, incomplete: true))
+        await Task.yield()
+        XCTAssertEqual(model.notes, [next]); XCTAssertEqual(model.selectedNote, next)
+        XCTAssertEqual(model.discoveryState, .complete); XCTAssertEqual(model.activeVault?.url, nextRoot)
+    }
+
+    func testUsableRestorationFinishesSafetyBeforePendingContentAndRejectsStaleSetup() async {
+        for interruptSafety in [false, true] {
+            let bookmarks = BookmarkStoreSpy(), files = FileServiceSpy(), safety = RestorationSafetySpy()
+            bookmarks.storedBookmarkData = Data("bookmark".utf8)
+            let root = URL(fileURLWithPath: "/tmp/resolved-vault", isDirectory: true)
+            let first = makeNote(title: "First", url: root.appendingPathComponent("First.md"))
+            let second = makeNote(title: "Second", url: root.appendingPathComponent("Second.md"))
+            files.notesToReturn = [first, second]
+            var safetyRelease: CheckedContinuation<Void, Never>?
+            var contentRelease: CheckedContinuation<String, Error>?
+            if interruptSafety { safety.finishHook = { await withCheckedContinuation { safetyRelease = $0 } } }
+            files.readHook = { url, _ in
+                if url == first.url { return try await withCheckedThrowingContinuation { contentRelease = $0 } }
+                return "New selection"
+            }
+            let model = AppModel(bookmarkStore: bookmarks, fileService: files, restorationSafety: safety)
+            let opening = Task { await model.bootstrap() }
+            await modelWait { interruptSafety ? safetyRelease != nil : contentRelease != nil }
+            XCTAssertEqual(model.phase, .ready); XCTAssertEqual(safety.completions, [true])
+            XCTAssertEqual(model.requestedNoteURL, first.url); XCTAssertTrue(model.isNoteLoading)
+            await model.openNote(second)
+            safetyRelease?.resume(); contentRelease?.resume(returning: "Old content"); await opening.value
+            XCTAssertEqual(model.selectedNote, second); XCTAssertEqual(model.noteText, "New selection")
+            if interruptSafety { XCTAssertFalse(files.readNoteCalls.contains(first.url)) }
+        }
+    }
+
+    func testEmptyIntermediateBatchDoesNotDeclareEmptyVault() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/empty-batch")
+        let note = makeNote(title: "Found", url: root.appendingPathComponent("Found.md"))
+        var release: CheckedContinuation<NoteDiscoveryBatch, Error>?
+        files.discoveryHook = { _, cursor, _ in
+            if cursor == nil { return NoteDiscoveryBatch(notes: [], cursor: NoteDiscoveryCursor()) }
+            return try await withCheckedThrowingContinuation { release = $0 }
+        }
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        let opening = Task { await model.openVault(at: root) }
+        await modelWait { release != nil }
+        XCTAssertEqual(model.phase, .loading); XCTAssertEqual(model.discoveryState, .loading)
+        release?.resume(returning: NoteDiscoveryBatch(notes: [note], cursor: nil)); await opening.value
+        XCTAssertEqual(model.phase, .ready); XCTAssertEqual(model.selectedNote, note)
+    }
+
+    func testPreviewDemandDeduplicatesAndInvalidatesAfterSaveOrRefresh() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/preview-demand")
+        let note = makeNote(title: "Visible", url: root.appendingPathComponent("Visible.md"))
+        let offscreen = makeNote(title: "Offscreen", url: root.appendingPathComponent("Offscreen.md"))
+        files.notesToReturn = [note, offscreen]
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        await model.openVault(at: root)
+        XCTAssertTrue(files.previewCalls.isEmpty); XCTAssertEqual(model.preview(for: note), .omitted)
+        var release: CheckedContinuation<NotePreview, Error>?
+        files.previewHook = { _, request in
+            XCTAssertEqual(request.priority, .optional)
+            return try await withCheckedThrowingContinuation { release = $0 }
+        }
+        let first = Task { await model.loadPreview(for: note) }
+        await modelWait { release != nil }
+        XCTAssertEqual(model.preview(for: note), .pending)
+        await model.loadPreview(for: note)
+        XCTAssertEqual(files.previewCalls, [note.url])
+        release?.resume(returning: .available("Excerpt", truncated: true)); await first.value
+        XCTAssertEqual(model.preview(for: note), .available("Excerpt", truncated: true))
+        XCTAssertEqual(model.preview(for: offscreen), .omitted)
+        files.previewHook = nil
+        await model.openNote(note)
+        let beforeSaveDemand = model.previewDemand(for: note)
+        model.updateNoteText("New text"); await model.saveCurrentNoteIfNeeded()
+        XCTAssertNotEqual(model.previewDemand(for: note), beforeSaveDemand)
+        XCTAssertEqual(model.preview(for: note), .omitted)
+        await model.loadPreview(for: note)
+        XCTAssertEqual(files.previewCalls.count, 2)
+        let beforeRefreshDemand = model.previewDemand(for: note)
+        model.retryDiscovery(); await modelWait { model.discoveryState == .complete }
+        XCTAssertNotEqual(model.previewDemand(for: note), beforeRefreshDemand)
+        XCTAssertEqual(model.preview(for: note), .omitted)
+    }
+
+    func testCancelledOrStalePreviewCannotPopulateCache() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/stale-preview")
+        let note = makeNote(title: "Note", url: root.appendingPathComponent("Note.md"))
+        files.notesToReturn = [note]
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        await model.openVault(at: root)
+        var release: CheckedContinuation<NotePreview, Error>?
+        var attempt: ProviderAttempt?
+        files.previewHook = { _, request in
+            attempt = request.attempt
+            return try await withCheckedThrowingContinuation { release = $0 }
+        }
+        let demand = Task { await model.loadPreview(for: note) }
+        await modelWait { release != nil }
+        demand.cancel()
+        await modelWait { attempt?.cancelled == true }
+        release?.resume(returning: .available("Stale", truncated: false)); await demand.value
+        XCTAssertEqual(model.preview(for: note), .omitted)
+        files.previewHook = { _, _ in throw CocoaError(.fileReadNoPermission) }
+        await model.loadPreview(for: note)
+        XCTAssertEqual(model.preview(for: note), .unavailable)
+        files.previewHook = { _, _ in try await withCheckedThrowingContinuation { release = $0 } }
+        let stale = Task { await model.loadPreview(for: note) }
+        await modelWait { model.preview(for: note) == .pending }
+        model.retryDiscovery()
+        release?.resume(returning: .available("Old version", truncated: false)); await stale.value
+        await modelWait { model.discoveryState == .complete }
+        XCTAssertEqual(model.preview(for: note), .omitted)
+    }
+
+    func testPreviewCacheBudgetEvictionAndVersionChange() {
+        let root = URL(fileURLWithPath: "/tmp/cache")
+        let first = makeNote(title: "First", url: root.appendingPathComponent("First.md"))
+        let second = makeNote(title: "Second", url: root.appendingPathComponent("Second.md"))
+        let cache = NotePreviewCache(capacity: 8)
+        cache.insert(.available("12345", truncated: false), for: first)
+        cache.insert(.available("67890", truncated: false), for: second)
+        XCTAssertNil(cache.value(for: first)); XCTAssertEqual(cache.byteCount, 5)
+        var changed = second; changed.sourceByteCount = 99
+        XCTAssertNil(cache.value(for: changed)); XCTAssertEqual(cache.byteCount, 0)
+        let full = NotePreviewCache()
+        full.insert(.available(String(repeating: "a", count: 4 * 1024 * 1024), truncated: true), for: first)
+        full.insert(.available("b", truncated: false), for: second)
+        XCTAssertLessThanOrEqual(full.byteCount, 4 * 1024 * 1024); XCTAssertNil(full.value(for: first))
+    }
+
+    func testOversizedInitialNoteLeavesBrowserUsableAndCannotSavePlaceholder() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/oversized-initial")
+        let note = makeNote(title: "Large", url: root.appendingPathComponent("Large.md"))
+        files.notesToReturn = [note]
+        files.readHook = { _, _ in throw VaultError.noteTooLarge }
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        await model.openVault(at: root)
+        XCTAssertEqual(model.phase, .ready); XCTAssertEqual(model.notes, [note]); XCTAssertNil(model.selectedNote)
+        XCTAssertEqual(model.failedNoteURL, note.url); XCTAssertFalse(model.hasUnsavedChanges)
+        model.updateNoteText("placeholder"); await model.saveCurrentNoteIfNeeded()
+        XCTAssertTrue(files.savedNotes.isEmpty); XCTAssertFalse(model.hasUnsavedChanges)
+        files.readHook = nil
+        await model.retryNoteLoading(); XCTAssertEqual(model.selectedNote, note)
+    }
+
     func testLateNoteFailureDoesNotReplaceNewSelectionOrAlert() async {
         let files = FileServiceSpy()
         let first = makeNote(title: "First", url: files.createdVaultURL.appendingPathComponent("First.md"))
@@ -312,8 +524,9 @@ final class AppModelTests: XCTestCase {
             else { files.readHook = { _, _ in throw CocoaError(.fileReadCorruptFile) } }
             let model = AppModel(bookmarkStore: bookmarks, fileService: files, restorationSafety: RestorationSafetySpy())
             await model.bootstrap()
-            XCTAssertEqual(bookmarks.storedBookmarkData, data)
-            XCTAssertEqual(model.phase, .providerRecovery)
+            XCTAssertEqual(bookmarks.storedBookmarkData, failDiscovery ? data : Data("bookmark".utf8))
+            XCTAssertEqual(model.phase, failDiscovery ? .providerRecovery : .ready)
+            if !failDiscovery { XCTAssertNil(model.selectedNote); XCTAssertNotNil(model.failedNoteURL) }
         }
         let invalid = BookmarkStoreSpy(); invalid.storedBookmarkData = Data("invalid".utf8)
         invalid.resolveError = CocoaError(.fileReadCorruptFile)
@@ -949,6 +1162,9 @@ private final class FileServiceSpy: VaultFileServing {
     var createdVaultURL = URL(fileURLWithPath: "/tmp/default-vault", isDirectory: true)
     var notesToReturn: [NoteItem] = []
     var notesAfterSave: [NoteItem]?
+    var discoveryHook: ((URL, NoteDiscoveryCursor?, ProviderRequest) async throws -> NoteDiscoveryBatch)?
+    var previewHook: ((NoteItem, ProviderRequest) async throws -> NotePreview)?
+    var previewCalls: [URL] = []
     var listHook: ((URL, ProviderRequest) async throws -> [NoteItem])?
     var readHook: ((URL, ProviderRequest) async throws -> String)?
     var saveHook: ((String, URL, ProviderRequest) async throws -> Void)?
@@ -977,6 +1193,16 @@ private final class FileServiceSpy: VaultFileServing {
             return notesAfterSave
         }
         return notesToReturn
+    }
+
+    func discoverNotes(in vaultURL: URL, cursor: NoteDiscoveryCursor?, request: ProviderRequest) async throws -> NoteDiscoveryBatch {
+        if let discoveryHook { return try await discoveryHook(vaultURL, cursor, request) }
+        return NoteDiscoveryBatch(notes: try await listMarkdownNotes(in: vaultURL, request: request), cursor: nil)
+    }
+    func readPreview(for note: NoteItem, request: ProviderRequest) async throws -> NotePreview {
+        previewCalls.append(note.url)
+        if let previewHook { return try await previewHook(note, request) }
+        return .available("Demanded preview", truncated: false)
     }
 
     func createNote(named name: String, in vaultURL: URL, request: ProviderRequest) async throws -> URL {
