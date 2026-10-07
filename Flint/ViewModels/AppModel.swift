@@ -145,10 +145,12 @@ final class AppModel: ObservableObject {
             recoveryMessage = "The previous vault restoration was interrupted or could not be safely started. Its saved selection remains available."
             return
         }
+        var didResolveBookmark = false
         do {
             let request = ProviderRequest(vaultURL: nil, attempt: attempt)
             let url = try await bookmarkStore.resolveBookmarkData(bookmark, request: request)
             guard current(generation, attempt) else { action.finish(.cancellation); return }
+            didResolveBookmark = true
             try await loadVault(url, persist: true, attempt: attempt, generation: generation)
             guard vaultGeneration == generation else { return }
             let completed = phase == .ready
@@ -158,7 +160,7 @@ final class AppModel: ObservableObject {
             guard vaultGeneration == generation else { return }
             action.finish(.failure, error: error)
             let e = error as NSError
-            if e.domain == NSCocoaErrorDomain && e.code == NSFileReadCorruptFileError {
+            if !didResolveBookmark && e.domain == NSCocoaErrorDomain && e.code == NSFileReadCorruptFileError {
                 bookmarkStore.clearBookmarkData(); stopLoading(generation); phase = .onboarding
                 alertMessage = "Your previous vault could not be reopened. Please select it again."
             } else { recover(error, generation: generation) }
@@ -260,6 +262,8 @@ final class AppModel: ObservableObject {
             guard vaultGeneration == vault, navigationGeneration == operation else { return }
             notes = discovered
             if let note = notes.first(where: { $0.url == url }) {
+                // Creation has finished; navigation owns any subsequent pending state.
+                isBusy = false
                 await openNote(note)
                 if vaultGeneration == vault, selectedNote?.url == url { completedNoteCreations.removeValue(forKey: key) }
             }

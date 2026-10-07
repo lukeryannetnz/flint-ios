@@ -211,3 +211,10 @@ A successful note creation SHALL retain its destination URL until discovery and 
 - WHEN note creation succeeds and discovery fails or times out
 - THEN retry refreshes and opens the already-created note
 - AND no duplicate creation is attempted
+
+#### Scenario: Dirty editor prevents opening a created note
+
+- WHEN edits made while creation refresh awaits cannot be saved before navigation
+- THEN the previous editor retains its text and destination
+- AND the creation busy indicator clears
+- AND the created URL remains available for retry

@@ -106,3 +106,9 @@ Bookmark resolution, creation and security-scope acquisition SHALL run on the bo
 
 - WHEN choosing another vault awaits an app-local abandonment write and a newer vault opens meanwhile
 - THEN completion of the old safety write cannot replace the newer vault screen with onboarding
+
+#### Scenario: Valid bookmark resolves before content corruption
+
+- WHEN bookmark resolution succeeds but discovery or note reading reports corrupt content
+- THEN the saved bookmark remains available for retry
+- AND corruption in a later file stage is not evidence of invalid bookmark data

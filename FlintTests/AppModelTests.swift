@@ -282,6 +282,49 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.isBusy)
     }
 
+    func testCorruptContentAfterBookmarkResolutionPreservesSavedPermission() async {
+        for failDiscovery in [true, false] {
+            let bookmarks = BookmarkStoreSpy(), files = FileServiceSpy()
+            let data = Data("valid bookmark".utf8); bookmarks.storedBookmarkData = data
+            files.notesToReturn = [makeNote(title: "Corrupt", url: URL(fileURLWithPath: "/tmp/resolved-vault/Corrupt.md"))]
+            if failDiscovery { files.listHook = { _, _ in throw CocoaError(.fileReadCorruptFile) } }
+            else { files.readHook = { _, _ in throw CocoaError(.fileReadCorruptFile) } }
+            let model = AppModel(bookmarkStore: bookmarks, fileService: files, restorationSafety: RestorationSafetySpy())
+            await model.bootstrap()
+            XCTAssertEqual(bookmarks.storedBookmarkData, data)
+            XCTAssertEqual(model.phase, .providerRecovery)
+        }
+        let invalid = BookmarkStoreSpy(); invalid.storedBookmarkData = Data("invalid".utf8)
+        invalid.resolveError = CocoaError(.fileReadCorruptFile)
+        let model = AppModel(bookmarkStore: invalid, fileService: FileServiceSpy(), restorationSafety: RestorationSafetySpy())
+        await model.bootstrap()
+        XCTAssertNil(invalid.storedBookmarkData); XCTAssertEqual(model.phase, .onboarding)
+    }
+
+    func testCreatedNoteSaveBeforeNavigationFailureClearsBusyAndKeepsRecoveryResult() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/creation-dirty-editor")
+        let original = makeNote(title: "Original", url: root.appendingPathComponent("Original.md"))
+        files.notesToReturn = [original]
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files, restorationSafety: RestorationSafetySpy())
+        await model.openVault(at: root)
+        var release: CheckedContinuation<[NoteItem], Error>?
+        files.listHook = { _, _ in try await withCheckedThrowingContinuation { release = $0 } }
+        files.saveHook = { _, _, _ in throw CocoaError(.fileWriteNoPermission) }
+        let creation = Task { await model.createNote(named: "Created.md") }
+        await modelWait { release != nil }
+        model.updateNoteText("Edits while creation is pending")
+        files.listHook = nil
+        release?.resume(returning: files.notesToReturn)
+        await creation.value
+        XCTAssertEqual(model.selectedNote?.url, original.url)
+        XCTAssertEqual(model.noteText, "Edits while creation is pending")
+        XCTAssertTrue(model.hasUnsavedChanges); XCTAssertFalse(model.isBusy)
+        files.saveHook = nil
+        await model.createNote(named: "Created.md")
+        XCTAssertEqual(files.createdNoteCalls.count, 1)
+        XCTAssertEqual(model.selectedNote?.url, root.appendingPathComponent("Created.md"))
+    }
+
     private func modelWait(_ predicate: () -> Bool) async {
         let deadline = Date().addingTimeInterval(3)
         while !predicate() && Date() < deadline { try? await Task.sleep(for: .milliseconds(2)) }
