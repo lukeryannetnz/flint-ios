@@ -45,11 +45,18 @@ The system SHALL expose cancellable loading, a slow state after 5 seconds, and a
 
 The system SHALL discover note metadata incrementally without eagerly reading content, preserve supported file filters and sort rules, and publish usable partial results. Previews SHALL be demand-driven with bounded reads and caching. Progress SHALL report observed counts and stages without inventing a total or download percentage. Each discovery batch SHALL contain at most 64 notes and examine at most 256 entries, release its worker slot between batches, and admit explicit reads ahead of optional continuation work. Metadata failures SHALL be diagnosed and mark discovery incomplete without removing usable results.
 
+#### Scenario: A complete refresh supersedes an older discovery
+
+- WHEN creation or a save publishes a newer complete metadata listing
+- THEN the older incremental cursor is invalidated before that listing is published
+- AND late cursor completion cannot remove newly created notes or restore obsolete metadata
+
 #### Scenario: Bound preview work
 
 - WHEN visible or recently requested notes need previews
 - THEN each preview reads no more than 64 KiB of source and decodes only complete UTF-8 sequences
 - AND omitted, truncated, and unavailable previews are distinguishable
+- AND exact 64 KiB sources are complete previews when a coordinated end-offset check establishes EOF without reading another source byte
 - AND the preview cache stays within 4 MiB and invalidates on observed content-version changes, successful saves, or explicit refresh
 - AND offscreen preview demand is cancelled and stale preview results cannot replace a newer version
 - AND an empty successful source is distinguished from a preview omitted before demand

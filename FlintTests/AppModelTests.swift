@@ -130,6 +130,26 @@ final class AppModelTests: XCTestCase {
         }
     }
 
+    func testCreationListingSupersedesOlderDiscoveryWithoutRemovingCreatedNote() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/creation-during-discovery")
+        let initial = makeNote(title: "Initial", url: root.appendingPathComponent("Initial.md"))
+        files.notesToReturn = [initial]
+        var release: CheckedContinuation<NoteDiscoveryBatch, Error>?
+        files.discoveryHook = { _, cursor, _ in
+            if cursor == nil { return NoteDiscoveryBatch(notes: [initial], cursor: NoteDiscoveryCursor()) }
+            return try await withCheckedThrowingContinuation { release = $0 }
+        }
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        await model.openVault(at: root); await modelWait { release != nil }
+        await model.createNote(named: "Created.md")
+        let created = root.appendingPathComponent("Created.md")
+        XCTAssertEqual(model.selectedNote?.url, created)
+        release?.resume(returning: NoteDiscoveryBatch(notes: [initial], cursor: nil))
+        await modelWait { model.discoveryState == .complete }
+        XCTAssertTrue(model.notes.contains { $0.url == created })
+        XCTAssertEqual(model.selectedNote?.url, created)
+    }
+
     func testEmptyIntermediateBatchDoesNotDeclareEmptyVault() async {
         let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/empty-batch")
         let note = makeNote(title: "Found", url: root.appendingPathComponent("Found.md"))

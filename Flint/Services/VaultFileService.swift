@@ -93,7 +93,11 @@ final class VaultFileService: VaultFileServing {
         try await executor.execute(request, step: .preview) { context in
             try context.coordinated(.coordinationRead, at: note.url) { url in
                 let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
-                let prefix = try Self.readPrefix(limit: 64 * 1024, check: context.checkCancellation) { try handle.read(upToCount: $0) ?? Data() }
+                let prefix = try Self.readPrefix(limit: 64 * 1024, check: context.checkCancellation, hasMore: {
+                    try context.checkCancellation()
+                    let offset = try handle.offset()
+                    return try handle.seekToEnd() > offset
+                }) { try handle.read(upToCount: $0) ?? Data() }
                 let text = try Self.decodePreviewPrefix(prefix.data, truncated: prefix.truncated)
                 DebugLog.shared.observe(.preview, bytes: prefix.data.count)
                 if text.isEmpty { return .empty }
@@ -204,7 +208,7 @@ final class VaultFileService: VaultFileServing {
         guard let text = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
         return text
     }
-    static func readPrefix(limit: Int, check: () throws -> Void = {}, read: (Int) throws -> Data) throws -> (data: Data, truncated: Bool) {
+    static func readPrefix(limit: Int, check: () throws -> Void = {}, hasMore: () throws -> Bool, read: (Int) throws -> Data) throws -> (data: Data, truncated: Bool) {
         var data = Data()
         while data.count < limit {
             try check()
@@ -212,7 +216,7 @@ final class VaultFileService: VaultFileServing {
             if chunk.isEmpty { return (data, false) }
             data.append(chunk)
         }
-        return (data, true)
+        return (data, try hasMore())
     }
     static func decodePreviewPrefix(_ data: Data, truncated: Bool) throws -> String {
         if let text = String(data: data, encoding: .utf8) { return text }

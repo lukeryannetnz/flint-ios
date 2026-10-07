@@ -232,6 +232,15 @@ final class AppModel: ObservableObject {
         notes = byURL.values.sorted(by: NoteItem.mostRecentlyModified)
     }
 
+    private func acceptCompleteMetadata(_ refreshed: [NoteItem]) {
+        // A full listing is authoritative; an older cursor must never prune its newer URLs.
+        discoveryAttempt?.cancel(); discoveryAttempt = nil
+        discoveryTask?.cancel(); discoveryTask = nil
+        mergeMetadata(refreshed)
+        notes = refreshed.sorted(by: NoteItem.mostRecentlyModified)
+        discoveryState = .complete
+    }
+
     private func startDiscovery(root: URL, cursor: NoteDiscoveryCursor?, seen: Set<URL>, incomplete: Bool, generation: UUID) {
         discoveryAttempt?.cancel(); discoveryTask?.cancel()
         let attempt = attemptFactory(); discoveryAttempt = attempt
@@ -384,7 +393,7 @@ final class AppModel: ObservableObject {
             guard navigationGeneration == operation else { return }
             let discovered = try await fileService.listMarkdownNotes(in: root, request: request)
             guard vaultGeneration == vault, navigationGeneration == operation else { return }
-            notes = discovered
+            acceptCompleteMetadata(discovered)
             if let note = notes.first(where: { $0.url == url }) {
                 // Creation has finished; navigation owns any subsequent pending state.
                 isBusy = false
@@ -434,7 +443,7 @@ final class AppModel: ObservableObject {
                 do {
                     let refreshed = try await fileService.listMarkdownNotes(in: root, request: request)
                     guard vaultGeneration == vault, documentGeneration == document else { return }
-                    notes = refreshed
+                    acceptCompleteMetadata(refreshed)
                     if let selected = notes.first(where: { $0.url == note.url }) { selectedNote = selected }
                 } catch { DebugLog.shared.begin(.metadata).finish(.failure, error: error) }
             } catch {

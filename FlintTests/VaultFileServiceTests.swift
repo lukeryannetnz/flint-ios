@@ -139,11 +139,28 @@ final class VaultFileServiceTests: XCTestCase {
         let empty = try await service.readPreview(for: notes[0], request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         XCTAssertEqual(empty, .empty)
         var offset = 0, requested = 0
-        let prefix = try VaultFileService.readPrefix(limit: 64 * 1024) { count in
+        let prefix = try VaultFileService.readPrefix(limit: 64 * 1024, hasMore: { offset < bytes.count }) { count in
             requested += count; let end = min(offset + count, bytes.count)
             defer { offset = end }; return bytes.subdata(in: offset..<end)
         }
         XCTAssertEqual(prefix.data.count, 64 * 1024); XCTAssertEqual(requested, 64 * 1024)
+    }
+
+    func testExactPreviewSourceLimitUsesEOFWithoutReadingAnExtraByte() async throws {
+        let url = temporaryDirectoryURL.appendingPathComponent("Exact.md")
+        var bytes = Data("Visible paragraph\n".utf8)
+        bytes.append(Data(repeating: 0x61, count: 64 * 1024 - bytes.count))
+        try bytes.write(to: url)
+        let notes = try await service.listMarkdownNotes(in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        let preview = try await service.readPreview(for: XCTUnwrap(notes.first), request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        XCTAssertEqual(preview, .available("Visible paragraph", truncated: false))
+        var offset = 0, sourceBytesRead = 0
+        let prefix = try VaultFileService.readPrefix(limit: 64 * 1024, hasMore: { offset < bytes.count }) { count in
+            let end = min(offset + count, bytes.count)
+            sourceBytesRead += end - offset
+            defer { offset = end }; return bytes.subdata(in: offset..<end)
+        }
+        XCTAssertFalse(prefix.truncated); XCTAssertEqual(sourceBytesRead, 64 * 1024)
     }
 
     func testEditableReadEnforcesActualByteLimitAndDoesNotChangeOversizedFile() async throws {
