@@ -22,7 +22,7 @@
 - [x] 3.3 Add per-operation coordination cancellation, generation invalidation, 30-second foreground deadlines, and independent logical completion; verify blocked-before-accessor and blocked-inside-accessor tests return UI recovery without waiting and reject late results.
 - [x] 3.4 Add worker-owned source/destination security-scope leases; verify timed-out workers retain access until actual completion, start/stop calls balance, and another vault can use the remaining slot.
 - [x] 3.5 Integrate explicit loading/pending/recovery state into `AppModel` and `RootView`, including retry saturation and uncertain creation outcomes; verify UI fault cases can cancel, choose another vault, or export without stale alerts/state replacing the current screen.
-- [ ] 3.6 Document cancellation guarantees, worker capacity, and lease lifetime in the module interface; verify tests demonstrate the documented distinction between logical cancellation and actual accessor termination.
+- [x] 3.6 Document cancellation guarantees, worker capacity, and lease lifetime in the module interface; verify tests demonstrate the documented distinction between logical cancellation and actual accessor termination.
 
 ## 4. Incremental note loading and safe persistence
 
