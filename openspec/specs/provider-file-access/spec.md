@@ -229,3 +229,15 @@ Actual mutation outcomes SHALL preserve created URLs, complete image-import resu
 - THEN its full Markdown, asset URL and alt text remain available
 - AND Recover image reuses that completed result without another provider mutation
 - AND switching notes cannot insert the late result into the new note
+
+#### Scenario: Repeated source callback while an import is active
+
+- WHEN another file or camera callback arrives before the first import returns
+- THEN the first request is registered as in flight before provider dispatch
+- AND the second callback cannot create another asset or clear the first request's busy state
+
+#### Scenario: Actual late failure permits a fresh source
+
+- WHEN a timed-out import has actually failed or never started
+- THEN a new source selection removes that resolved failure before admission
+- AND no Recover action is required to start the replacement

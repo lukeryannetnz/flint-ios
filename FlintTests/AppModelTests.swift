@@ -380,6 +380,57 @@ final class AppModelTests: XCTestCase {
         }
     }
 
+    func testSecondSourceCallbackCannotStartWhileFirstImportIsInFlight() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/in-flight-images")
+        let note = makeNote(title: "Note", url: root.appendingPathComponent("Note.md"))
+        let inserted = InsertedNoteImage(markdownSource: "![Image](Image.png)", assetURL: root.appendingPathComponent("Image.png"), altText: "Image")
+        files.notesToReturn = [note]
+        var release: CheckedContinuation<InsertedNoteImage, Error>?
+        files.imageImportHook = { _ in
+            if release != nil { return inserted }
+            return try await withCheckedThrowingContinuation { release = $0 }
+        }
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files, restorationSafety: RestorationSafetySpy())
+        await model.openVault(at: root)
+        let first = Task { await model.importImage(from: root.appendingPathComponent("Source.png")) }
+        await modelWait { release != nil }
+        let second = await model.importCameraImage(UIImage())
+        XCTAssertNil(second); XCTAssertTrue(model.isBusy)
+        XCTAssertEqual(files.importedImages.count + files.importedCameraImages.count, 1)
+        release?.resume(returning: inserted)
+        let completed = await first.value
+        XCTAssertEqual(completed, inserted); XCTAssertFalse(model.isBusy)
+    }
+
+    func testActualLateImportFailureAllowsNewSourceWithoutRecovery() async throws {
+        let time = ModelTestTime(), clock = ForegroundClock(clock: { time.now })
+        let gate = DispatchSemaphore(value: 0); defer { gate.signal() }
+        let entered = expectation(description: "first import blocked")
+        let drained = expectation(description: "failed import actually finished")
+        let executor = ProviderExecutor(automaticSampling: false, startScope: { _ in false }, workerDidFinish: { drained.fulfill() })
+        let root = URL(fileURLWithPath: "/tmp/failed-import-replacement"), files = FileServiceSpy()
+        let note = makeNote(title: "Note", url: root.appendingPathComponent("Note.md"))
+        files.notesToReturn = [note]
+        files.imageImportHook = { request in
+            try await executor.execute(request, step: .imageImport, mutation: true) { _ -> InsertedNoteImage in
+                entered.fulfill(); gate.wait(); throw CocoaError(.fileReadUnknown)
+            }
+        }
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files, restorationSafety: RestorationSafetySpy(),
+            attemptFactory: { ProviderAttempt(clock: clock) })
+        await model.openVault(at: root)
+        let first = Task { await model.importImage(from: root.appendingPathComponent("Unavailable.png")) }
+        await fulfillment(of: [entered], timeout: 2)
+        time.advance(30); executor.sample()
+        let early = await first.value
+        XCTAssertNil(early); XCTAssertTrue(model.hasPendingImageImport)
+        gate.signal(); await fulfillment(of: [drained], timeout: 20)
+        files.imageImportHook = nil
+        let replacement = await model.importImage(from: root.appendingPathComponent("New.png"))
+        XCTAssertNotNil(replacement); XCTAssertFalse(model.hasPendingImageImport)
+        XCTAssertEqual(files.importedImages.count, 2)
+    }
+
     private func modelWait(_ predicate: () -> Bool) async {
         let deadline = Date().addingTimeInterval(3)
         while !predicate() && Date() < deadline { try? await Task.sleep(for: .milliseconds(2)) }

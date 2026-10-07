@@ -59,6 +59,7 @@ final class AppModel: ObservableObject {
     private var saveTask: (id: UUID, task: Task<Void, Never>)?
     private var uncertainSave: UncertainSave?
     private var pendingImageImports: [URL: [PendingImageImport]] = [:]
+    private var inFlightImageImports: [URL: UUID] = [:]
     private var completedNoteCreations: [NoteCreationKey: URL] = [:]
     private var uncertainNoteCreation: (name: String, folder: [String], attempt: ProviderAttempt, operation: UUID)?
     private var revision = 0
@@ -335,7 +336,7 @@ final class AppModel: ObservableObject {
     }
 
     func importImage(from sourceURL: URL, preferredFilename: String? = nil) async -> InsertedNoteImage? {
-        guard let note = selectedNote, let root = activeVault?.url, canStartImageImport(for: note.url) else { return nil }
+        guard let note = selectedNote, let root = activeVault?.url else { return nil }
         return await performImageImport(note: note, root: root) { request in
             try await self.fileService.importImage(from: sourceURL, preferredFilename: preferredFilename,
                 into: note.url, vaultURL: root, request: request)
@@ -343,13 +344,26 @@ final class AppModel: ObservableObject {
     }
 
     func importCameraImage(_ image: UIImage) async -> InsertedNoteImage? {
-        guard let note = selectedNote, let root = activeVault?.url, canStartImageImport(for: note.url) else { return nil }
+        guard let note = selectedNote, let root = activeVault?.url else { return nil }
         return await performImageImport(note: note, root: root) { request in
             try await self.fileService.importCameraImage(image, into: note.url, vaultURL: root, request: request)
         }
     }
 
     private func canStartImageImport(for noteURL: URL) -> Bool {
+        pendingImageImports[noteURL]?.removeAll { pending in
+            guard case let .attempt(attempt, operation) = pending else { return false }
+            switch attempt.mutationOutcome(operation) {
+            case .completed(.failure), .notStarted: return true
+            default: return false
+            }
+        }
+        if pendingImageImports[noteURL]?.isEmpty == true { pendingImageImports.removeValue(forKey: noteURL) }
+        refreshImageImportRecovery()
+        guard inFlightImageImports[noteURL] == nil else {
+            alertMessage = "Another image import is still running for this note."
+            return false
+        }
         guard pendingImageImports[noteURL]?.isEmpty != false else {
             alertMessage = "A previous image import has an unresolved result. Use Recover image before selecting another source."
             return false
@@ -359,9 +373,15 @@ final class AppModel: ObservableObject {
 
     private func performImageImport(note: NoteItem, root: URL,
         work: (ProviderRequest) async throws -> InsertedNoteImage) async -> InsertedNoteImage? {
+        guard selectedNote?.url == note.url, activeVault?.url == root, canStartImageImport(for: note.url) else { return nil }
         let document = documentGeneration, vault = vaultGeneration
+        let importID = UUID(); inFlightImageImports[note.url] = importID
         let request = ProviderRequest(vaultURL: root, attempt: attemptFactory())
-        isBusy = true; defer { if documentGeneration == document { isBusy = false } }
+        isBusy = true
+        defer {
+            if inFlightImageImports[note.url] == importID { inFlightImageImports.removeValue(forKey: note.url) }
+            if documentGeneration == document { isBusy = false }
+        }
         do {
             let inserted = try await work(request)
             guard documentGeneration == document, vaultGeneration == vault else {
