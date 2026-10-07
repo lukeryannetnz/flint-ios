@@ -223,13 +223,16 @@ final class ProviderExecutor {
     private let factory: () -> ProviderCoordinating
     private let startScope: (URL) -> Bool
     private let stopScope: (URL) -> Void
+    private let workerDidFinish: () -> Void
     private var pending: [ProviderJob] = []
     private var running: [UUID: ProviderJob] = [:]
 
     init(limit: Int = 2, pendingLimit: Int = 32, log: DebugLog = .shared, automaticSampling: Bool = true,
          coordinatorFactory: @escaping () -> ProviderCoordinating = { SystemProviderCoordinator() },
          startScope: @escaping (URL) -> Bool = { $0.startAccessingSecurityScopedResource() },
-         stopScope: @escaping (URL) -> Void = { $0.stopAccessingSecurityScopedResource() }) {
+         stopScope: @escaping (URL) -> Void = { $0.stopAccessingSecurityScopedResource() },
+         workerDidFinish: @escaping () -> Void = {}) {
+        self.workerDidFinish = workerDidFinish
         self.limit = limit; self.pendingLimit = pendingLimit; self.log = log; factory = coordinatorFactory
         self.startScope = startScope; self.stopScope = stopScope
         sampler = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "flint.provider-deadlines", qos: .utility))
@@ -310,6 +313,7 @@ final class ProviderExecutor {
             let starts = schedule()
             lock.unlock()
             job.request.attempt.unregister(job.id)
+            workerDidFinish()
             deliver?()
             starts.forEach(dispatch)
         }

@@ -66,7 +66,9 @@ final class ProviderExecutorTests: XCTestCase {
     func testTwoDrainingWorkersReturnBusyForAnotherVaultWithoutAddingWorkers() async throws {
         let time = TestTime(), gate = DispatchSemaphore(value: 0)
         let clock = ForegroundClock(clock: { time.now })
-        let executor = ProviderExecutor(automaticSampling: false, startScope: { _ in false })
+        let drained = expectation(description: "both actual workers released their slots")
+        drained.expectedFulfillmentCount = 2
+        let executor = ProviderExecutor(automaticSampling: false, startScope: { _ in false }, workerDidFinish: { drained.fulfill() })
         let entered = expectation(description: "two blocked workers"); entered.expectedFulfillmentCount = 2
         let tasks = ["a", "b"].map { name in
             Task {
@@ -90,7 +92,39 @@ final class ProviderExecutorTests: XCTestCase {
             XCTFail("Expected busy")
         } catch { XCTAssertEqual((error as? ProviderFailure)?.reason, .busy) }
         XCTAssertEqual(executor.counts.active, 2); XCTAssertEqual(executor.counts.pending, 0)
-        gate.signal(); gate.signal(); await until { executor.counts.active == 0 }
+        gate.signal(); gate.signal()
+        await fulfillment(of: [drained], timeout: 20)
+        XCTAssertEqual(executor.counts.active, 0)
+    }
+
+    func testActualCompletionNotificationWaitsForLeaseCleanupAfterLogicalTimeout() async throws {
+        let time = TestTime(), clock = ForegroundClock(clock: { time.now })
+        let attempt = ProviderAttempt(clock: clock)
+        let accessorGate = DispatchSemaphore(value: 0), cleanupGate = DispatchSemaphore(value: 0)
+        defer { accessorGate.signal(); cleanupGate.signal() }
+        let entered = expectation(description: "accessor blocked")
+        let cleaning = expectation(description: "scope cleanup blocked")
+        let finished = expectation(description: "actual worker cleanup complete")
+        let observations = TestOrder(), scopes = ScopeCounts()
+        let executor = ProviderExecutor(automaticSampling: false, startScope: { scopes.start($0); return true },
+            stopScope: { url in cleaning.fulfill(); cleanupGate.wait(); scopes.stop(url) },
+            workerDidFinish: { observations.add("finished"); finished.fulfill() })
+        let task = Task {
+            try await executor.execute(ProviderRequest(vaultURL: URL(fileURLWithPath: "/tmp/delayed-cleanup"), attempt: attempt), step: .noteRead) { _ in
+                entered.fulfill(); accessorGate.wait(); return 1
+            }
+        }
+        await fulfillment(of: [entered], timeout: 2)
+        time.advance(30); executor.sample()
+        do { _ = try await task.value; XCTFail("Expected logical timeout") }
+        catch { XCTAssertEqual((error as? ProviderFailure)?.reason, .timedOut) }
+        accessorGate.signal()
+        await fulfillment(of: [cleaning], timeout: 20)
+        XCTAssertEqual(executor.counts.active, 1)
+        XCTAssertEqual(scopes.stopped, 0); XCTAssertTrue(observations.values.isEmpty)
+        cleanupGate.signal()
+        await fulfillment(of: [finished], timeout: 20)
+        XCTAssertEqual(executor.counts.active, 0); XCTAssertEqual(scopes.started, scopes.stopped)
     }
 
     func testPendingQueueLimitAndQueuedCancellation() async throws {

@@ -195,3 +195,13 @@ Loading SHALL publish current stage and a slow indicator, allow cancellation, an
 - THEN the UI reports busy recovery immediately
 - AND it creates no extra provider threads or unbounded queued retries
 - AND local diagnostic sharing remains available
+
+### Requirement: Retain successful creation through follow-up failure
+
+A successful note creation SHALL retain its destination URL until discovery and selection succeed. Retrying the same creation name and folder after refresh/read failure SHALL reuse that result and SHALL not issue another create mutation. Switching vault generations SHALL discard obsolete creation presentation state.
+
+#### Scenario: Refresh fails after creation
+
+- WHEN note creation succeeds and discovery fails or times out
+- THEN retry refreshes and opens the already-created note
+- AND no duplicate creation is attempted

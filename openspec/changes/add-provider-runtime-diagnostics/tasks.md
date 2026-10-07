@@ -17,11 +17,11 @@
 
 ## 3. Asynchronous file access and worker lifetime
 
-- [ ] 3.1 Replace the synchronous vault-file interface with asynchronous operation results and migrate `AppModel`, bookmark restoration, real adapters, and spies; verify ordinary vault creation, open, note creation/read/write, and existing import tests through the new interface.
-- [ ] 3.2 Add the bounded blocking executor with two global slots, one per vault, 32 pending requests, priority for explicit actions, and a separately bounded decode lane; verify fault tests prove concurrency/queue limits and no provider access executes on the main thread.
-- [ ] 3.3 Add per-operation coordination cancellation, generation invalidation, 30-second foreground deadlines, and independent logical completion; verify blocked-before-accessor and blocked-inside-accessor tests return UI recovery without waiting and reject late results.
-- [ ] 3.4 Add worker-owned source/destination security-scope leases; verify timed-out workers retain access until actual completion, start/stop calls balance, and another vault can use the remaining slot.
-- [ ] 3.5 Integrate explicit loading/pending/recovery state into `AppModel` and `RootView`, including retry saturation and uncertain creation outcomes; verify UI fault cases can cancel, choose another vault, or export without stale alerts/state replacing the current screen.
+- [x] 3.1 Replace the synchronous vault-file interface with asynchronous operation results and migrate `AppModel`, bookmark restoration, real adapters, and spies; verify ordinary vault creation, open, note creation/read/write, and existing import tests through the new interface.
+- [x] 3.2 Add the bounded blocking executor with two global slots, one per vault, 32 pending requests, priority for explicit actions, and a separately bounded decode lane; verify fault tests prove concurrency/queue limits and no provider access executes on the main thread.
+- [x] 3.3 Add per-operation coordination cancellation, generation invalidation, 30-second foreground deadlines, and independent logical completion; verify blocked-before-accessor and blocked-inside-accessor tests return UI recovery without waiting and reject late results.
+- [x] 3.4 Add worker-owned source/destination security-scope leases; verify timed-out workers retain access until actual completion, start/stop calls balance, and another vault can use the remaining slot.
+- [x] 3.5 Integrate explicit loading/pending/recovery state into `AppModel` and `RootView`, including retry saturation and uncertain creation outcomes; verify UI fault cases can cancel, choose another vault, or export without stale alerts/state replacing the current screen.
 - [ ] 3.6 Document cancellation guarantees, worker capacity, and lease lifetime in the module interface; verify tests demonstrate the documented distinction between logical cancellation and actual accessor termination.
 
 ## 4. Incremental note loading and safe persistence

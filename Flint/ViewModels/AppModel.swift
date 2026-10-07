@@ -9,6 +9,10 @@ final class AppModel: ObservableObject {
         case open(URL, Bool)
         case create(String, URL, ProviderAttempt?, UUID?)
     }
+    private struct NoteCreationKey: Hashable {
+        let name: String
+        let folder: [String]
+    }
     private struct UncertainSave {
         let attempt: ProviderAttempt
         let operation: UUID
@@ -19,6 +23,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var phase: Phase = .loading
     @Published private(set) var activeVault: Vault?
     @Published private(set) var notes: [NoteItem] = []
+    @Published private(set) var requestedNoteURL: URL?
     @Published private(set) var selectedNote: NoteItem?
     @Published var noteText = ""
     @Published private(set) var hasUnsavedChanges = false
@@ -48,6 +53,7 @@ final class AppModel: ObservableObject {
     private var autosaveTask: Task<Void, Never>?
     private var saveTask: (id: UUID, task: Task<Void, Never>)?
     private var uncertainSave: UncertainSave?
+    private var completedNoteCreations: [NoteCreationKey: URL] = [:]
     private var uncertainNoteCreation: (name: String, folder: [String], attempt: ProviderAttempt, operation: UUID)?
     private var revision = 0
     private var recoveryTarget: RecoveryTarget = .restoration
@@ -125,7 +131,7 @@ final class AppModel: ObservableObject {
 
     func cancelNoteLoading() {
         noteAttempt?.cancel(); noteAttempt = nil; documentGeneration = UUID()
-        isNoteLoading = false; isBusy = false
+        isNoteLoading = false; isBusy = false; requestedNoteURL = selectedNote?.url
     }
 
     private func restoreBookmark(_ bookmark: Data, explicit: Bool) async {
@@ -181,8 +187,8 @@ final class AppModel: ObservableObject {
         guard current(generation, attempt) else { return }
         if let bookmark { bookmarkStore.saveBookmarkData(bookmark) }
         activeVault = Vault(name: url.lastPathComponent, url: url); notes = discovered
-        selectedNote = first; noteText = text ?? ""; hasUnsavedChanges = false; revision = 0
-        documentGeneration = UUID(); uncertainSave = nil; uncertainNoteCreation = nil
+        selectedNote = first; requestedNoteURL = first?.url; noteText = text ?? ""; hasUnsavedChanges = false; revision = 0
+        documentGeneration = UUID(); uncertainSave = nil; uncertainNoteCreation = nil; completedNoteCreations = [:]
         stopLoading(generation); phase = .ready
     }
 
@@ -209,9 +215,13 @@ final class AppModel: ObservableObject {
         let vault = vaultGeneration
         noteAttempt?.cancel(); let attempt = attemptFactory(); noteAttempt = attempt
         documentGeneration = UUID(); let document = documentGeneration
+        requestedNoteURL = note.url; alertMessage = nil
         isNoteLoading = true; isBusy = true
         defer {
-            if documentGeneration == document { isNoteLoading = false; isBusy = false; noteAttempt = nil }
+            if documentGeneration == document {
+                isNoteLoading = false; isBusy = false; noteAttempt = nil
+                requestedNoteURL = selectedNote?.url
+            }
         }
         do {
             let text = try await fileService.readNote(at: note.url, request: ProviderRequest(vaultURL: root, attempt: attempt))
@@ -227,12 +237,14 @@ final class AppModel: ObservableObject {
         guard let root = activeVault?.url, await prepareNavigation() else { return }
         let vault = vaultGeneration; let attempt = attemptFactory(); let request = ProviderRequest(vaultURL: root, attempt: attempt)
         let operation = UUID(); navigationGeneration = operation
-        isBusy = true
+        isBusy = true; alertMessage = nil
         defer { if navigationGeneration == operation { isBusy = false } }
         do {
             let folder = folderPathComponents.reduce(root) { $0.appendingPathComponent($1, isDirectory: true) }
+            let key = NoteCreationKey(name: name, folder: folderPathComponents)
             let url: URL
-            if let uncertain = uncertainNoteCreation, uncertain.name == name, uncertain.folder == folderPathComponents {
+            if let completed = completedNoteCreations[key] { url = completed }
+            else if let uncertain = uncertainNoteCreation, uncertain.name == name, uncertain.folder == folderPathComponents {
                 switch uncertain.attempt.mutationOutcome(uncertain.operation) {
                 case .running, nil: alertMessage = "Previous note creation is still stopping. Please wait before retrying."; return
                 case let .completed(.success(existing)):
@@ -243,10 +255,14 @@ final class AppModel: ObservableObject {
                 }
             } else { url = try await fileService.createNote(named: name, in: folder, request: request) }
             guard vaultGeneration == vault, navigationGeneration == operation else { return }
+            completedNoteCreations[key] = url
             let discovered = try await fileService.listMarkdownNotes(in: root, request: request)
             guard vaultGeneration == vault, navigationGeneration == operation else { return }
             notes = discovered
-            if let note = notes.first(where: { $0.url == url }) { await openNote(note) }
+            if let note = notes.first(where: { $0.url == url }) {
+                await openNote(note)
+                if vaultGeneration == vault, selectedNote?.url == url { completedNoteCreations.removeValue(forKey: key) }
+            }
         } catch {
             guard vaultGeneration == vault, navigationGeneration == operation else { return }
             if let failure = error as? ProviderFailure, failure.uncertainMutation {
@@ -361,7 +377,8 @@ final class AppModel: ObservableObject {
     private func beginLoading(_ attempt: ProviderAttempt, target: RecoveryTarget) -> UUID {
         loadingAttempt?.cancel(); noteAttempt?.cancel(); noteAttempt = nil
         autosaveTask?.cancel(); autosaveTask = nil
-        activeLease = nil; activeVault = nil; notes = []; selectedNote = nil; noteText = ""
+        activeLease = nil; activeVault = nil; notes = []; selectedNote = nil; requestedNoteURL = nil; noteText = ""
+        completedNoteCreations = [:]
         hasUnsavedChanges = false; isNoteLoading = false; alertMessage = nil
         vaultGeneration = UUID(); documentGeneration = UUID(); recoveryTarget = target
         loadingAttempt = attempt; phase = .loading; isBusy = true; isSlow = false

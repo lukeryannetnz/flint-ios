@@ -38,7 +38,7 @@ struct VaultBrowserView: View {
     var body: some View {
         splitView
             .onAppear {
-                selectedNoteURL = model.selectedNote?.url
+                selectedNoteURL = model.requestedNoteURL
                 normalizeFolderPathComponents()
             }
             .onChange(of: browserMode) { _, newValue in
@@ -47,7 +47,7 @@ struct VaultBrowserView: View {
             .onChange(of: model.notes) { _, _ in
                 normalizeFolderPathComponents()
             }
-            .onChange(of: model.selectedNote?.url) { _, newValue in
+            .onChange(of: model.requestedNoteURL) { _, newValue in
                 syncSelectedNoteURL(newValue)
             }
             .onChange(of: selectedNoteURL) { _, newValue in
@@ -223,11 +223,13 @@ struct VaultBrowserView: View {
     }
 
     private func handleSelectedNoteURLChange(_ newValue: URL?) {
-        guard let newValue, newValue != model.selectedNote?.url,
+        guard let newValue, newValue != model.requestedNoteURL,
               let note = model.notes.first(where: { $0.url == newValue }) else { return }
 
         Task {
             await model.openNote(note)
+            // A save-before-navigation failure never starts a pending read.
+            if selectedNoteURL == newValue, !model.isNoteLoading { syncSelectedNoteURL(model.requestedNoteURL) }
         }
     }
 

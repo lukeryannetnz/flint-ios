@@ -77,6 +77,7 @@ jobs:
             -destination "id=$CI_SIMULATOR_ID" \
             -derivedDataPath /tmp/flint-ci-derived-data \
             -resultBundlePath "$RUNNER_TEMP/FlintTests.xcresult" \
+            -parallel-testing-enabled NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             test-without-building

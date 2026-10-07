@@ -232,6 +232,56 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.phase, .ready); XCTAssertEqual(model.activeVault?.url, root)
     }
 
+    func testCreationRetryReusesSuccessAfterDiscoveryFailure() async {
+        let files = FileServiceSpy()
+        let root = URL(fileURLWithPath: "/tmp/created-note-recovery")
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files, restorationSafety: RestorationSafetySpy())
+        await model.openVault(at: root)
+        files.listHook = { _, _ in throw CocoaError(.fileReadUnknown) }
+        await model.createNote(named: "Created.md")
+        XCTAssertEqual(files.createdNoteCalls.count, 1)
+        files.listHook = nil
+        files.readHook = { _, _ in throw CocoaError(.fileReadUnknown) }
+        await model.createNote(named: "Created.md")
+        XCTAssertEqual(files.createdNoteCalls.count, 1)
+        XCTAssertNil(model.selectedNote)
+        files.readHook = nil
+        await model.createNote(named: "Created.md")
+        XCTAssertEqual(files.createdNoteCalls.count, 1)
+        XCTAssertEqual(model.selectedNote?.url, root.appendingPathComponent("Created.md"))
+        XCTAssertFalse(model.isBusy)
+    }
+
+    func testFailedAndCancelledNoteRequestsRestoreRetainedSelectionForImmediateRetry() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/selection-recovery")
+        let first = makeNote(title: "First", url: root.appendingPathComponent("First.md"))
+        let second = makeNote(title: "Second", url: root.appendingPathComponent("Second.md"))
+        files.notesToReturn = [first, second]
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files, restorationSafety: RestorationSafetySpy())
+        await model.openVault(at: root)
+        files.readHook = { _, _ in throw CocoaError(.fileReadUnknown) }
+        await model.openNote(second)
+        XCTAssertEqual(model.requestedNoteURL, first.url)
+        XCTAssertEqual(model.selectedNote?.url, first.url)
+        files.readHook = nil
+        await model.openNote(second)
+        XCTAssertEqual(model.selectedNote?.url, second.url)
+        var release: CheckedContinuation<String, Error>?
+        files.readHook = { _, _ in try await withCheckedThrowingContinuation { release = $0 } }
+        let pending = Task { await model.openNote(first) }
+        await modelWait { release != nil }
+        XCTAssertEqual(model.requestedNoteURL, first.url)
+        model.cancelNoteLoading()
+        XCTAssertEqual(model.requestedNoteURL, second.url)
+        release?.resume(returning: "obsolete")
+        await pending.value
+        XCTAssertEqual(model.requestedNoteURL, second.url)
+        files.readHook = nil
+        await model.openNote(first)
+        XCTAssertEqual(model.selectedNote?.url, first.url)
+        XCTAssertFalse(model.isBusy)
+    }
+
     private func modelWait(_ predicate: () -> Bool) async {
         let deadline = Date().addingTimeInterval(3)
         while !predicate() && Date() < deadline { try? await Task.sleep(for: .milliseconds(2)) }
@@ -734,6 +784,7 @@ private final class FileServiceSpy: VaultFileServing {
     var saveHook: ((String, URL, ProviderRequest) async throws -> Void)?
     var createHook: ((String, URL, ProviderRequest) async throws -> URL)?
     var createVaultCalls: [(String, URL)] = []
+    var createdNoteCalls: [(String, URL)] = []
     var listMarkdownNotesCalls: [URL] = []
     var savedNotes: [(String, URL)] = []
     var noteContents: [URL: String] = [:]
@@ -757,7 +808,9 @@ private final class FileServiceSpy: VaultFileServing {
     }
 
     func createNote(named name: String, in vaultURL: URL, request: ProviderRequest) async throws -> URL {
+        createdNoteCalls.append((name, vaultURL))
         let url = vaultURL.appendingPathComponent(name)
+        if notesToReturn.contains(where: { $0.url == url }) { throw VaultError.itemAlreadyExists(name) }
         notesToReturn.append(makeNote(title: name, url: url))
         return url
     }
