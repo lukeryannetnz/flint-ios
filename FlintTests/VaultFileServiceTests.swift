@@ -130,7 +130,7 @@ final class VaultFileServiceTests: XCTestCase {
             XCTAssertFalse(batch.incomplete)
             XCTAssertLessThanOrEqual(batch.examinedCount, 256)
             XCTAssertLessThanOrEqual(batch.notes.count, 64)
-            XCTAssertTrue(batch.notes.allSatisfy { $0.url.path == relocated.appendingPathComponent($0.relativePath).path })
+            XCTAssertTrue(batch.notes.allSatisfy { $0.url.path == original.appendingPathComponent($0.relativePath).path })
             for note in batch.notes { XCTAssertTrue(paths.insert(note.relativePath).inserted) }
             batches += 1
             guard let next = batch.cursor else { break }
@@ -138,6 +138,23 @@ final class VaultFileServiceTests: XCTestCase {
             XCTAssertLessThan(batches, 10)
         }
         XCTAssertEqual(paths.count, 133)
+        let earlier = try XCTUnwrap(first.notes.first)
+        let actual = relocated.appendingPathComponent(earlier.relativePath)
+        try "Relocated content".write(to: actual, atomically: true, encoding: .utf8)
+        let text = try await service.readNote(at: earlier.url, request: ProviderRequest(vaultURL: original))
+        XCTAssertEqual(text, "Relocated content")
+        let preview = try await service.readPreview(for: earlier, request: ProviderRequest(vaultURL: original))
+        XCTAssertEqual(preview, .available("Relocated content", truncated: false))
+        try await service.saveNote("Updated content", at: earlier.url, request: ProviderRequest(vaultURL: original))
+        XCTAssertEqual(try String(contentsOf: actual, encoding: .utf8), "Updated content")
+        let created = try await service.createNote(named: "New", in: original.appendingPathComponent("Folder/Nested"), request: ProviderRequest(vaultURL: original))
+        XCTAssertEqual(created.path, original.appendingPathComponent("Folder/Nested/New.md").path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: relocated.appendingPathComponent("Folder/Nested/New.md").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: original.path))
+        XCTAssertEqual(coordinator.readClaims.filter { $0.path == actual.path }.count, 2, "Content and preview require item-specific read claims")
+        XCTAssertTrue(coordinator.writeClaims.contains { $0.path == actual.path }, "Save requires an item-specific write claim")
+
+
         XCTAssertEqual(executor.counts.active, 0)
     }
 
@@ -475,13 +492,22 @@ final class VaultFileServiceTests: XCTestCase {
 
 private final class RelocatingDiscoveryCoordinator: ProviderCoordinating {
     var root: URL
+    private let logicalRoot: URL
     private(set) var accessorActive = false
-    init(root: URL) { self.root = root }
+    private(set) var readClaims: [URL] = []
+    private(set) var writeClaims: [URL] = []
+    init(root: URL) { self.root = root; logicalRoot = root }
     func read(at url: URL, accessor: (URL) -> Void) throws {
+        readClaims.append(url)
         accessorActive = true
         defer { accessorActive = false }
-        accessor(root)
+        accessor(url.path == logicalRoot.path ? root : url)
     }
-    func write(at url: URL, accessor: (URL) -> Void) throws { accessor(root) }
+    func write(at url: URL, accessor: (URL) -> Void) throws {
+        writeClaims.append(url)
+        accessorActive = true
+        defer { accessorActive = false }
+        accessor(url.path == logicalRoot.path ? root : url)
+    }
     func cancel() {}
 }

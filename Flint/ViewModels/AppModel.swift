@@ -54,6 +54,7 @@ final class AppModel: ObservableObject {
     private var vaultGeneration = UUID()
     private var documentGeneration = UUID()
     private var metadataGeneration = UUID()
+    private var pendingRefreshReconciliation: (document: UUID, metadata: UUID)?
     private var initialContentPending = false
     private var navigationGeneration = UUID()
     private var activeLease: SecurityScopeLease?
@@ -244,6 +245,7 @@ final class AppModel: ObservableObject {
     private func acceptCompleteMetadata(_ refreshed: [NoteItem]) {
         // A full listing is authoritative; an older cursor must never prune its newer URLs.
         metadataGeneration = UUID()
+        pendingRefreshReconciliation = nil
         discoveryAttempt?.cancel(); discoveryAttempt = nil
         discoveryTask?.cancel(); discoveryTask = nil
         mergeMetadata(refreshed)
@@ -287,7 +289,11 @@ final class AppModel: ObservableObject {
     }
 
     private func reconcileRefreshedSelection(document: UUID) async {
-        guard documentGeneration == document, !isNoteLoading else { return }
+        guard documentGeneration == document else { return }
+        if isNoteLoading {
+            pendingRefreshReconciliation = (document, metadataGeneration)
+            return
+        }
         if let selectedNote, let updated = notes.first(where: { $0.url == selectedNote.url }) {
             self.selectedNote = updated
             return
@@ -299,7 +305,7 @@ final class AppModel: ObservableObject {
         // Only a clean document can be discarded; all later work loses the old destination generation.
         documentGeneration = UUID(); navigationGeneration = UUID()
         autosaveTask?.cancel(); autosaveTask = nil
-        selectedNote = nil; requestedNoteURL = nil; failedNoteURL = nil
+        selectedNote = nil; requestedNoteURL = nil; failedNoteURL = nil; alertMessage = nil
         noteText = ""; revision = 0; uncertainSave = nil; isBusy = false
         refreshImageImportRecovery()
         if let first = notes.first { await openNote(first) }
@@ -308,6 +314,7 @@ final class AppModel: ObservableObject {
     func retryDiscovery() {
         guard let root = activeVault?.url else { return }
         metadataGeneration = UUID()
+        pendingRefreshReconciliation = nil
         clearPreviews()
         startDiscovery(root: root, cursor: nil, seen: [], incomplete: false, generation: vaultGeneration, reconcileSelection: true)
     }
@@ -376,6 +383,7 @@ final class AppModel: ObservableObject {
         guard let root = activeVault?.url, await prepareNavigation() else { return }
         let vault = vaultGeneration
         noteAttempt?.cancel(); let attempt = initialAttempt ?? attemptFactory(); noteAttempt = attempt
+        pendingRefreshReconciliation = nil
         documentGeneration = UUID(); let document = documentGeneration
         requestedNoteURL = note.url; failedNoteURL = nil; alertMessage = nil
         isNoteLoading = true; isBusy = true
@@ -384,6 +392,13 @@ final class AppModel: ObservableObject {
                 isNoteLoading = false; isBusy = false; noteAttempt = nil
                 requestedNoteURL = selectedNote?.url
                 refreshImageImportRecovery()
+                if let pending = pendingRefreshReconciliation, pending.document == document {
+                    pendingRefreshReconciliation = nil
+                    Task { [weak self] in
+                        guard let self, metadataGeneration == pending.metadata else { return }
+                        await reconcileRefreshedSelection(document: pending.document)
+                    }
+                }
             }
         }
         await onStarted?()
@@ -629,7 +644,7 @@ final class AppModel: ObservableObject {
     private func beginLoading(_ attempt: ProviderAttempt, target: RecoveryTarget) -> UUID {
         loadingAttempt?.cancel(); noteAttempt?.cancel(); noteAttempt = nil
         discoveryAttempt?.cancel(); discoveryAttempt = nil; discoveryTask?.cancel(); discoveryTask = nil
-        metadataGeneration = UUID(); initialContentPending = false; discoveryState = .idle; clearPreviews()
+        metadataGeneration = UUID(); pendingRefreshReconciliation = nil; initialContentPending = false; discoveryState = .idle; clearPreviews()
         autosaveTask?.cancel(); autosaveTask = nil
         activeLease = nil; activeVault = nil; notes = []; selectedNote = nil; requestedNoteURL = nil; failedNoteURL = nil; noteText = ""
         completedNoteCreations = [:]; hasPendingImageImport = false

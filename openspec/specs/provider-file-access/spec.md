@@ -53,6 +53,21 @@ The system SHALL discover note metadata incrementally without eagerly reading co
 - AND directory-name snapshots are obtained inside coordinated access without reading note content
 - AND metadata processing retains the 256-entry and 64-note batch limits
 
+#### Scenario: Keep note identity stable across provider root relocation
+
+- WHEN a provider supplies a relocated root between discovery batches or note operations
+- THEN all published notes retain stable identities derived from the selected vault URL and relative path
+- AND note content reads, preview reads, writes and note creation resolve those relative paths under their current coordinated root
+- AND content reads and existing-note writes use item-specific coordination after root resolution rather than relying on a directory claim
+- AND previously published notes remain readable after the original physical root disappears
+
+#### Scenario: Refresh finishes during a pending note read
+
+- WHEN an explicit complete refresh finishes while the unchanged document is loading
+- THEN reconciliation is deferred until that read settles
+- AND a missing clean selection opens the first remaining note or clears an empty editor
+- AND later document, vault or metadata generations invalidate deferred reconciliation
+
 #### Scenario: A complete refresh supersedes an older discovery
 
 - WHEN creation or a save publishes a newer complete metadata listing

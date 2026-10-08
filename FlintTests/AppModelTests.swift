@@ -204,6 +204,63 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(files.readNoteCalls, [old.url, chosen.url])
     }
 
+    func testRefreshDuringInitialReadReconcilesAfterSuccessOrFailure() async {
+        for readFails in [false, true] {
+            for becomesEmpty in [false, true] {
+                let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/pending-refresh")
+                let removed = makeNote(title: "Removed", url: root.appendingPathComponent("Removed.md"))
+                let remaining = makeNote(title: "Remaining", url: root.appendingPathComponent("Remaining.md"))
+                files.notesToReturn = [removed]
+                var release: CheckedContinuation<String, Error>?
+                files.readHook = { url, _ in
+                    if url == removed.url { return try await withCheckedThrowingContinuation { release = $0 } }
+                    return "Remaining content"
+                }
+                let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+                let opening = Task { await model.openVault(at: root) }
+                await modelWait { release != nil }
+                files.notesToReturn = becomesEmpty ? [] : [remaining]
+                model.retryDiscovery()
+                await modelWait { model.discoveryState == .complete }
+                XCTAssertTrue(model.isNoteLoading)
+                if readFails { release?.resume(throwing: VaultError.noteMissing) }
+                else { release?.resume(returning: "Old content") }
+                await opening.value
+                await modelWait { !model.isNoteLoading && model.selectedNote == (becomesEmpty ? nil : remaining) && model.failedNoteURL == nil && model.alertMessage == nil }
+                XCTAssertEqual(model.selectedNote, becomesEmpty ? nil : remaining)
+                XCTAssertEqual(model.noteText, becomesEmpty ? "" : "Remaining content")
+                XCTAssertNil(model.failedNoteURL)
+                XCTAssertNil(model.alertMessage)
+                XCTAssertFalse(model.hasUnsavedChanges)
+            }
+        }
+    }
+
+    func testDeferredRefreshCannotOverrideNewSelectionAfterPendingRead() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/deferred-refresh-navigation")
+        let removed = makeNote(title: "Removed", url: root.appendingPathComponent("Removed.md"))
+        let fallback = makeNote(title: "Fallback", url: root.appendingPathComponent("Fallback.md"), modifiedAt: .init(timeIntervalSince1970: 200))
+        let chosen = makeNote(title: "Chosen", url: root.appendingPathComponent("Chosen.md"), modifiedAt: .init(timeIntervalSince1970: 100))
+        files.notesToReturn = [removed]
+        var release: CheckedContinuation<String, Error>?
+        files.readHook = { url, _ in
+            if url == removed.url { return try await withCheckedThrowingContinuation { release = $0 } }
+            return "Chosen content"
+        }
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        let opening = Task { await model.openVault(at: root) }
+        await modelWait { release != nil }
+        files.notesToReturn = [fallback, chosen]
+        model.retryDiscovery(); await modelWait { model.discoveryState == .complete }
+        await model.openNote(chosen)
+        release?.resume(throwing: VaultError.noteMissing); await opening.value
+        await Task.yield()
+        XCTAssertEqual(model.selectedNote, chosen)
+        XCTAssertEqual(model.noteText, "Chosen content")
+        XCTAssertEqual(files.readNoteCalls, [removed.url, chosen.url])
+        XCTAssertNil(model.failedNoteURL); XCTAssertNil(model.alertMessage)
+    }
+
     func testRestorationAdmitsInitialContentBeforeOptionalContinuation() async {
         let bookmarks = BookmarkStoreSpy(), files = FileServiceSpy(), safety = RestorationSafetySpy()
         bookmarks.storedBookmarkData = Data("bookmark".utf8)

@@ -95,7 +95,7 @@ final class VaultFileService: VaultFileServing {
     }
     func readPreview(for note: NoteItem, request: ProviderRequest) async throws -> NotePreview {
         try await executor.execute(request, step: .preview) { context in
-            try context.coordinated(.coordinationRead, at: note.url) { url in
+            try self.coordinatedItem(at: note.url, in: request.vaultURL, step: .coordinationRead, context: context) { url in
                 let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
                 let prefix = try Self.readPrefix(limit: 64 * 1024, check: context.checkCancellation, hasMore: {
                     try context.checkCancellation()
@@ -111,15 +111,15 @@ final class VaultFileService: VaultFileServing {
     }
     func createNote(named name: String, in directoryURL: URL, request: ProviderRequest) async throws -> URL {
         try await executor.execute(request, step: .noteCreate, mutation: true) {
-            try self.createNoteBlocking(named: name, in: directoryURL, context: $0)
+            try self.createNoteBlocking(named: name, in: directoryURL, vaultURL: request.vaultURL, context: $0)
         }
     }
     func readNote(at url: URL, request: ProviderRequest) async throws -> String {
-        try await executor.execute(request, step: .noteRead) { try self.readNoteBlocking(at: url, context: $0) }
+        try await executor.execute(request, step: .noteRead) { try self.readNoteBlocking(at: url, vaultURL: request.vaultURL, context: $0) }
     }
     func saveNote(_ text: String, at url: URL, request: ProviderRequest) async throws {
         try await executor.execute(request, step: .noteSave, mutation: true) {
-            try self.saveNoteBlocking(text, at: url, context: $0)
+            try self.saveNoteBlocking(text, at: url, vaultURL: request.vaultURL, context: $0)
         }
     }
     func importImage(from sourceURL: URL, preferredFilename: String?, into noteURL: URL, vaultURL: URL,
@@ -206,7 +206,7 @@ final class VaultFileService: VaultFileServing {
                     guard let regular = values.isRegularFile else { throw VaultError.inaccessibleVault }
                     guard regular, values.isSymbolicLink != true else { continue }
                     let folder = relativePath.split(separator: "/").dropLast().joined(separator: "/")
-                    notes.append(NoteItem(url: url, title: url.deletingPathExtension().lastPathComponent,
+                    notes.append(NoteItem(url: vaultURL.appendingPathComponent(relativePath), title: url.deletingPathExtension().lastPathComponent,
                         relativePath: relativePath, folderPath: folder,
                         folderName: folder.split(separator: "/").last.map(String.init) ?? "Vault",
                         previewMarkdown: "", createdAt: values.creationDate ?? .distantPast,
@@ -262,11 +262,31 @@ final class VaultFileService: VaultFileServing {
         throw CocoaError(.fileReadInapplicableStringEncoding)
     }
 
-    private func createNoteBlocking(named name: String, in directoryURL: URL, context: ProviderWorkContext) throws -> URL {
+    /// Logical note URLs preserve vault-lane/cache identity; filesystem URLs exist only inside this claim.
+    private func coordinatedItem<T>(at url: URL, in vaultURL: URL?, step: DebugLogStep,
+                                    context: ProviderWorkContext, accessor: (URL) throws -> T) throws -> T {
+        guard let vaultURL else { return try context.coordinated(step, at: url, accessor) }
+        // Directory coordination alone does not coordinate its children. Resolve under a root claim,
+        // then use the URL supplied by the item's own claim for all content access.
+        let currentItem = try context.coordinated(.coordinationRead, at: vaultURL) { currentRoot in
+            try Self.resolvedItem(url, in: vaultURL, currentRoot: currentRoot)
+        }
+        return try context.coordinated(step, at: currentItem, accessor)
+    }
+
+    private static func resolvedItem(_ url: URL, in vaultURL: URL, currentRoot: URL) throws -> URL {
+        let rootPath = vaultURL.standardizedFileURL.path
+        let itemPath = url.standardizedFileURL.path
+        if itemPath == rootPath { return currentRoot }
+        guard itemPath.hasPrefix(rootPath + "/") else { throw VaultError.inaccessibleVault }
+        return currentRoot.appendingPathComponent(String(itemPath.dropFirst(rootPath.count + 1)))
+    }
+
+    private func createNoteBlocking(named name: String, in directoryURL: URL, vaultURL: URL?, context: ProviderWorkContext) throws -> URL {
         return try DebugLog.shared.measure(.noteCreate, file: directoryURL) {
             let fileName = try validatedMarkdownFilename(name)
 
-            return try context.coordinated(.coordinationWrite, at: directoryURL) { coordinatedDirectoryURL in
+            return try coordinatedItem(at: directoryURL, in: vaultURL, step: .coordinationWrite, context: context) { coordinatedDirectoryURL in
                 let noteURL = coordinatedDirectoryURL.appendingPathComponent(fileName, isDirectory: false)
 
                 guard !fileManager.fileExists(atPath: noteURL.path) else {
@@ -274,14 +294,14 @@ final class VaultFileService: VaultFileServing {
                 }
 
                 try "".write(to: noteURL, atomically: true, encoding: .utf8)
-                return noteURL
+                return vaultURL == nil ? noteURL : directoryURL.appendingPathComponent(fileName)
             }
         }
     }
 
-    private func readNoteBlocking(at url: URL, context: ProviderWorkContext) throws -> String {
+    private func readNoteBlocking(at url: URL, vaultURL: URL?, context: ProviderWorkContext) throws -> String {
         return try DebugLog.shared.measure(.noteRead, file: url) {
-            try context.coordinated(.coordinationRead, at: url) { coordinatedURL in
+            try coordinatedItem(at: url, in: vaultURL, step: .coordinationRead, context: context) { coordinatedURL in
                 guard fileManager.fileExists(atPath: coordinatedURL.path) else {
                     throw VaultError.noteMissing
                 }
@@ -294,12 +314,12 @@ final class VaultFileService: VaultFileServing {
         }
     }
 
-    private func saveNoteBlocking(_ text: String, at url: URL, context: ProviderWorkContext) throws {
+    private func saveNoteBlocking(_ text: String, at url: URL, vaultURL: URL?, context: ProviderWorkContext) throws {
         return try DebugLog.shared.measure(.noteSave, file: url) {
             #if DEBUG
             if ImageWorkflowSaveFailure.enabled { throw CocoaError(.fileWriteNoPermission) }
             #endif
-            try context.coordinated(.coordinationWrite, at: url) { coordinatedURL in
+            try coordinatedItem(at: url, in: vaultURL, step: .coordinationWrite, context: context) { coordinatedURL in
                 guard fileManager.fileExists(atPath: coordinatedURL.path) else {
                     throw VaultError.noteMissing
                 }
@@ -313,7 +333,8 @@ final class VaultFileService: VaultFileServing {
     private func importImageBlocking(from sourceURL: URL, preferredFilename: String?, into noteURL: URL, vaultURL: URL, context: ProviderWorkContext) throws -> InsertedNoteImage {
         return try DebugLog.shared.measure(.imageImport, file: sourceURL) {
             try context.coordinated(.coordinationWrite, at: vaultURL) { coordinatedVaultURL in
-                let assetFolderURL = noteAssetFolderURL(for: noteURL)
+                let coordinatedNoteURL = try Self.resolvedItem(noteURL, in: vaultURL, currentRoot: coordinatedVaultURL)
+                let assetFolderURL = noteAssetFolderURL(for: coordinatedNoteURL)
                 try fileManager.createDirectory(at: assetFolderURL, withIntermediateDirectories: true)
 
                 let preferredBaseName = preferredFilename ?? sourceURL.deletingPathExtension().lastPathComponent
@@ -327,11 +348,11 @@ final class VaultFileService: VaultFileServing {
                     try fileManager.copyItem(at: coordinatedSource, to: targetURL)
                 }
 
-                let relativePath = relativeMarkdownPath(from: noteURL, to: targetURL)
+                let relativePath = relativeMarkdownPath(from: coordinatedNoteURL, to: targetURL)
                 let altText = displayAltText(from: preferredBaseName)
                 let markdownSource = "![\(altText)](\(relativePath))"
 
-                guard Self.resolveImageURL(markdownPath: relativePath, noteURL: noteURL, vaultURL: coordinatedVaultURL) != nil else {
+                guard Self.resolveImageURL(markdownPath: relativePath, noteURL: coordinatedNoteURL, vaultURL: coordinatedVaultURL) != nil else {
                     throw VaultError.inaccessibleVault
                 }
 
@@ -343,7 +364,8 @@ final class VaultFileService: VaultFileServing {
     private func importCameraImageBlocking(_ image: UIImage, into noteURL: URL, vaultURL: URL, context: ProviderWorkContext) throws -> InsertedNoteImage {
         return try DebugLog.shared.measure(.imageImport, file: noteURL) {
             try context.coordinated(.coordinationWrite, at: vaultURL) { coordinatedVaultURL in
-                let assetFolderURL = noteAssetFolderURL(for: noteURL)
+                let coordinatedNoteURL = try Self.resolvedItem(noteURL, in: vaultURL, currentRoot: coordinatedVaultURL)
+                let assetFolderURL = noteAssetFolderURL(for: coordinatedNoteURL)
                 try fileManager.createDirectory(at: assetFolderURL, withIntermediateDirectories: true)
 
                 let preferredBaseName = "Photo \(timestampFormatter.string(from: Date()))"
@@ -353,11 +375,11 @@ final class VaultFileService: VaultFileServing {
                 }
                 try jpegData.write(to: targetURL, options: .atomic)
 
-                let relativePath = relativeMarkdownPath(from: noteURL, to: targetURL)
+                let relativePath = relativeMarkdownPath(from: coordinatedNoteURL, to: targetURL)
                 let altText = displayAltText(from: preferredBaseName)
                 let markdownSource = "![\(altText)](\(relativePath))"
 
-                guard Self.resolveImageURL(markdownPath: relativePath, noteURL: noteURL, vaultURL: coordinatedVaultURL) != nil else {
+                guard Self.resolveImageURL(markdownPath: relativePath, noteURL: coordinatedNoteURL, vaultURL: coordinatedVaultURL) != nil else {
                     throw VaultError.inaccessibleVault
                 }
 
