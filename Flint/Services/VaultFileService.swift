@@ -44,8 +44,12 @@ protocol VaultFileServing {
 
 /// Only the file adapter accesses this cursor, inside serial per-vault executor jobs.
 final class NoteDiscoveryCursor {
-    fileprivate var enumerator: FileManager.DirectoryEnumerator?
-    fileprivate var root: URL?
+    fileprivate struct Directory {
+        let relativePath: String
+        var names: [String]?
+        var nextIndex = 0
+    }
+    fileprivate var directories = [Directory(relativePath: "")]
     fileprivate var incomplete = false
 }
 
@@ -151,33 +155,56 @@ final class VaultFileService: VaultFileServing {
 
     private func discoveryBatch(in vaultURL: URL, cursor: NoteDiscoveryCursor, context: ProviderWorkContext) throws -> NoteDiscoveryBatch {
         try context.coordinated(.coordinationRead, at: vaultURL) { root in
-            if cursor.enumerator == nil {
-                guard fileManager.fileExists(atPath: root.path) else { throw VaultError.inaccessibleVault }
-                cursor.root = root
-                cursor.enumerator = fileManager.enumerator(at: root,
-                    includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .creationDateKey, .contentModificationDateKey, .fileSizeKey],
-                    options: [.skipsHiddenFiles], errorHandler: { [weak cursor] _, error in
-                        cursor?.incomplete = true
-                        DebugLog.shared.begin(.enumeration).finish(.failure, error: error)
-                        return true
-                    })
-                guard cursor.enumerator != nil else { throw VaultError.inaccessibleVault }
-            }
+            guard fileManager.fileExists(atPath: root.path) else { throw VaultError.inaccessibleVault }
             var notes: [NoteItem] = [], examined = 0
             while examined < 256 && notes.count < 64 {
                 try context.checkCancellation()
-                guard let url = cursor.enumerator?.nextObject() as? URL else {
+                guard let directory = cursor.directories.last else {
                     DebugLog.shared.observe(.enumeration, count: notes.count)
                     return NoteDiscoveryBatch(notes: notes.sorted(by: NoteItem.mostRecentlyModified), cursor: nil, incomplete: cursor.incomplete, examinedCount: examined)
                 }
+                let directoryURL = directory.relativePath.isEmpty ? root : root.appendingPathComponent(directory.relativePath, isDirectory: true)
+                let index = cursor.directories.count - 1
+                if directory.names == nil {
+                    do {
+                        // Snapshot names only. No filesystem object survives this accessor.
+                        // A directory listing is indivisible in Foundation; metadata work is batched below.
+                        cursor.directories[index].names = try fileManager.contentsOfDirectory(at: directoryURL,
+                            includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]).map(\.lastPathComponent)
+                    } catch {
+                        cursor.incomplete = true
+                        DebugLog.shared.begin(.enumeration, file: directoryURL).finish(.failure, error: error)
+                        cursor.directories.removeLast()
+                        continue
+                    }
+                }
+                guard let names = cursor.directories[index].names, cursor.directories[index].nextIndex < names.count else {
+                    cursor.directories.removeLast()
+                    continue
+                }
+                let name = names[cursor.directories[index].nextIndex]
+                cursor.directories[index].nextIndex += 1
                 examined += 1
+                let url = directoryURL.appendingPathComponent(name)
+                let relativePath = directory.relativePath.isEmpty ? name : directory.relativePath + "/" + name
+                do {
+                    let type = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                    if type.isSymbolicLink == true { continue }
+                    if type.isDirectory == true {
+                        cursor.directories.append(.init(relativePath: relativePath))
+                        continue
+                    }
+                } catch {
+                    cursor.incomplete = true
+                    DebugLog.shared.begin(.metadata, file: url).finish(.failure, error: error)
+                    continue
+                }
                 let ext = url.pathExtension.lowercased()
                 guard ext == "md" || ext == "markdown" else { continue }
                 do {
                     let values = try DebugLog.shared.measure(.metadata, file: url) { try metadata(url) }
                     guard let regular = values.isRegularFile else { throw VaultError.inaccessibleVault }
                     guard regular, values.isSymbolicLink != true else { continue }
-                    let relativePath = String(url.path.dropFirst(root.path.count + 1))
                     let folder = relativePath.split(separator: "/").dropLast().joined(separator: "/")
                     notes.append(NoteItem(url: url, title: url.deletingPathExtension().lastPathComponent,
                         relativePath: relativePath, folderPath: folder,

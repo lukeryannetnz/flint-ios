@@ -45,6 +45,13 @@ The system SHALL expose cancellable loading, a slow state after 5 seconds, and a
 
 The system SHALL discover note metadata incrementally without eagerly reading content, preserve supported file filters and sort rules, and publish usable partial results. Previews SHALL be demand-driven with bounded reads and caching. Progress SHALL report observed counts and stages without inventing a total or download percentage. Automatic discovery continuation and visible preview requests SHALL not acquire the vault lane before the initial selected-content read has completed logically, including while restoration safety completion awaits. Each discovery batch SHALL contain at most 64 notes and examine at most 256 entries, release its worker slot between batches, and admit explicit reads ahead of optional continuation work. Metadata failures SHALL be diagnosed and mark discovery incomplete without removing usable results.
 
+#### Scenario: Resume discovery within a new coordination claim
+
+- WHEN a subsequent batch receives a relocated coordinated root
+- THEN it resumes relative directory/name state under that current root
+- AND no live enumerator or open handle survives the previous accessor
+- AND name snapshots are taken within coordination and metadata processing remains batched
+
 #### Scenario: A complete refresh supersedes an older discovery
 
 - WHEN creation or a save publishes a newer complete metadata listing

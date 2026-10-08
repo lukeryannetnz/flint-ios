@@ -101,6 +101,67 @@ final class VaultFileServiceTests: XCTestCase {
         } catch { XCTAssertEqual((error as NSError).code, NSFileReadInapplicableStringEncodingError) }
     }
 
+    func testDiscoveryResumesUsingCurrentCoordinatedRootAfterRelocation() async throws {
+        let original = temporaryDirectoryURL.appendingPathComponent("Original")
+        let relocated = temporaryDirectoryURL.appendingPathComponent("Relocated")
+        try FileManager.default.createDirectory(at: original, withIntermediateDirectories: true)
+        for index in 0..<130 {
+            try Data([0xff]).write(to: original.appendingPathComponent("Note \(index).md"))
+        }
+        let nested = original.appendingPathComponent("Folder/Nested")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        for index in 0..<3 { try Data([0xff]).write(to: nested.appendingPathComponent("Nested \(index).markdown")) }
+        let coordinator = RelocatingDiscoveryCoordinator(root: original)
+        let executor = ProviderExecutor(coordinatorFactory: { coordinator })
+        let service = VaultFileService(executor: executor, metadata: { url in
+            XCTAssertTrue(coordinator.accessorActive)
+            XCTAssertTrue(url.path.hasPrefix(coordinator.root.path + "/"))
+            return try url.resourceValues(forKeys: [.isRegularFileKey])
+        })
+        let first = try await service.discoverNotes(in: original, cursor: nil, request: ProviderRequest(vaultURL: original))
+        XCTAssertEqual(first.notes.count, 64)
+        XCTAssertFalse(coordinator.accessorActive)
+        try FileManager.default.moveItem(at: original, to: relocated)
+        coordinator.root = relocated
+        var cursor = try XCTUnwrap(first.cursor), paths = Set(first.notes.map(\.relativePath))
+        var batches = 0
+        while true {
+            let batch = try await service.discoverNotes(in: original, cursor: cursor, request: ProviderRequest(vaultURL: original))
+            XCTAssertFalse(batch.incomplete)
+            XCTAssertLessThanOrEqual(batch.examinedCount, 256)
+            XCTAssertLessThanOrEqual(batch.notes.count, 64)
+            XCTAssertTrue(batch.notes.allSatisfy { $0.url.path == relocated.appendingPathComponent($0.relativePath).path })
+            for note in batch.notes { XCTAssertTrue(paths.insert(note.relativePath).inserted) }
+            batches += 1
+            guard let next = batch.cursor else { break }
+            cursor = next
+            XCTAssertLessThan(batches, 10)
+        }
+        XCTAssertEqual(paths.count, 133)
+        XCTAssertEqual(executor.counts.active, 0)
+    }
+
+    func testDiscoveryResumesAfterNonmatchingEntryBudgetWithoutLosingNestedNotes() async throws {
+        for index in 0..<600 {
+            try Data().write(to: temporaryDirectoryURL.appendingPathComponent("Ignored \(index).txt"))
+        }
+        let nested = temporaryDirectoryURL.appendingPathComponent("Folder/Nested")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try Data([0xff]).write(to: nested.appendingPathComponent("Kept.markdown"))
+        var cursor: NoteDiscoveryCursor?, notes: [NoteItem] = [], batches = 0, examined = 0
+        repeat {
+            let batch = try await service.discoverNotes(in: temporaryDirectoryURL, cursor: cursor, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+            XCTAssertLessThanOrEqual(batch.examinedCount, 256)
+            XCTAssertFalse(batch.incomplete)
+            examined += batch.examinedCount
+            notes += batch.notes; cursor = batch.cursor; batches += 1
+            XCTAssertLessThan(batches, 10)
+        } while cursor != nil
+        XCTAssertEqual(examined, 603)
+        XCTAssertGreaterThanOrEqual(batches, 3)
+        XCTAssertEqual(notes.map(\.relativePath), ["Folder/Nested/Kept.markdown"])
+    }
+
     func testUnavailableMetadataPreservesUsableNotesAndMarksDiscoveryIncomplete() async throws {
         let available = temporaryDirectoryURL.appendingPathComponent("Available.md")
         let unavailable = temporaryDirectoryURL.appendingPathComponent("Unavailable.md")
@@ -410,4 +471,17 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertEqual(inserted.altText, "System Diagram")
         XCTAssertEqual(inserted.markdownSource, "![System Diagram](Daily Assets/System Diagram.heic)")
     }
+}
+
+private final class RelocatingDiscoveryCoordinator: ProviderCoordinating {
+    var root: URL
+    private(set) var accessorActive = false
+    init(root: URL) { self.root = root }
+    func read(at url: URL, accessor: (URL) -> Void) throws {
+        accessorActive = true
+        defer { accessorActive = false }
+        accessor(root)
+    }
+    func write(at url: URL, accessor: (URL) -> Void) throws { accessor(root) }
+    func cancel() {}
 }
