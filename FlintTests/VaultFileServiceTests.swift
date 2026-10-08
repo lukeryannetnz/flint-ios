@@ -72,6 +72,205 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertFalse(reopened.noteText.contains("file://"))
     }
 
+    func testMetadataBatchesAreBoundedFilterRegularFilesAndDoNotReadContents() async throws {
+        for index in 0..<130 {
+            // Invalid UTF-8 proves discovery does not read/decode the source.
+            try Data([0xff]).write(to: temporaryDirectoryURL.appendingPathComponent("Note \(index).md"))
+        }
+        try "hidden".write(to: temporaryDirectoryURL.appendingPathComponent(".Hidden.md"), atomically: true, encoding: .utf8)
+        try "ignored".write(to: temporaryDirectoryURL.appendingPathComponent("Other.txt"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: temporaryDirectoryURL.appendingPathComponent("Directory.md"), withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: temporaryDirectoryURL.appendingPathComponent("Link.md"), withDestinationURL: temporaryDirectoryURL.appendingPathComponent("Note 0.md"))
+        let executor = ProviderExecutor()
+        let service = VaultFileService(executor: executor, metadata: { url in
+            XCTAssertFalse(Thread.isMainThread)
+            return try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        })
+        var cursor: NoteDiscoveryCursor?, notes: [NoteItem] = [], batches = 0
+        repeat {
+            let batch = try await service.discoverNotes(in: temporaryDirectoryURL, cursor: cursor, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+            XCTAssertLessThanOrEqual(batch.notes.count, 64); XCTAssertLessThanOrEqual(batch.examinedCount, 256)
+            XCTAssertFalse(batch.incomplete); XCTAssertEqual(executor.counts.active, 0)
+            notes += batch.notes; cursor = batch.cursor; batches += 1
+        } while cursor != nil
+        XCTAssertGreaterThanOrEqual(batches, 3); XCTAssertEqual(notes.count, 130)
+        XCTAssertTrue(notes.allSatisfy { $0.previewMarkdown.isEmpty })
+        do {
+            _ = try await service.readNote(at: notes[0].url, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+            XCTFail("Invalid content must fail only on explicit read")
+        } catch { XCTAssertEqual((error as NSError).code, NSFileReadInapplicableStringEncodingError) }
+    }
+
+    func testDiscoveryResumesUsingCurrentCoordinatedRootAfterRelocation() async throws {
+        let original = temporaryDirectoryURL.appendingPathComponent("Original")
+        let relocated = temporaryDirectoryURL.appendingPathComponent("Relocated")
+        try FileManager.default.createDirectory(at: original, withIntermediateDirectories: true)
+        for index in 0..<130 {
+            try Data([0xff]).write(to: original.appendingPathComponent("Note \(index).md"))
+        }
+        let nested = original.appendingPathComponent("Folder/Nested")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        for index in 0..<3 { try Data([0xff]).write(to: nested.appendingPathComponent("Nested \(index).markdown")) }
+        let coordinator = RelocatingDiscoveryCoordinator(root: original)
+        let executor = ProviderExecutor(coordinatorFactory: { coordinator })
+        let service = VaultFileService(executor: executor, metadata: { url in
+            XCTAssertTrue(coordinator.accessorActive)
+            XCTAssertTrue(url.path.hasPrefix(coordinator.root.path + "/"))
+            return try url.resourceValues(forKeys: [.isRegularFileKey])
+        })
+        let first = try await service.discoverNotes(in: original, cursor: nil, request: ProviderRequest(vaultURL: original))
+        XCTAssertEqual(first.notes.count, 64)
+        XCTAssertFalse(coordinator.accessorActive)
+        try FileManager.default.moveItem(at: original, to: relocated)
+        coordinator.root = relocated
+        var cursor = try XCTUnwrap(first.cursor), paths = Set(first.notes.map(\.relativePath))
+        var batches = 0
+        while true {
+            let batch = try await service.discoverNotes(in: original, cursor: cursor, request: ProviderRequest(vaultURL: original))
+            XCTAssertFalse(batch.incomplete)
+            XCTAssertLessThanOrEqual(batch.examinedCount, 256)
+            XCTAssertLessThanOrEqual(batch.notes.count, 64)
+            XCTAssertTrue(batch.notes.allSatisfy { $0.url.path == original.appendingPathComponent($0.relativePath).path })
+            for note in batch.notes { XCTAssertTrue(paths.insert(note.relativePath).inserted) }
+            batches += 1
+            guard let next = batch.cursor else { break }
+            cursor = next
+            XCTAssertLessThan(batches, 10)
+        }
+        XCTAssertEqual(paths.count, 133)
+        let earlier = try XCTUnwrap(first.notes.first)
+        let actual = relocated.appendingPathComponent(earlier.relativePath)
+        try "Relocated content".write(to: actual, atomically: true, encoding: .utf8)
+        let text = try await service.readNote(at: earlier.url, request: ProviderRequest(vaultURL: original))
+        XCTAssertEqual(text, "Relocated content")
+        let preview = try await service.readPreview(for: earlier, request: ProviderRequest(vaultURL: original))
+        XCTAssertEqual(preview, .available("Relocated content", truncated: false))
+        try await service.saveNote("Updated content", at: earlier.url, request: ProviderRequest(vaultURL: original))
+        XCTAssertEqual(try String(contentsOf: actual, encoding: .utf8), "Updated content")
+        let created = try await service.createNote(named: "New", in: original.appendingPathComponent("Folder/Nested"), request: ProviderRequest(vaultURL: original))
+        XCTAssertEqual(created.path, original.appendingPathComponent("Folder/Nested/New.md").path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: relocated.appendingPathComponent("Folder/Nested/New.md").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: original.path))
+        XCTAssertEqual(coordinator.readClaims.filter { $0.path == actual.path }.count, 2, "Content and preview require item-specific read claims")
+        XCTAssertTrue(coordinator.writeClaims.contains { $0.path == actual.path }, "Save requires an item-specific write claim")
+
+
+        XCTAssertEqual(executor.counts.active, 0)
+    }
+
+    func testDiscoveryResumesAfterNonmatchingEntryBudgetWithoutLosingNestedNotes() async throws {
+        for index in 0..<600 {
+            try Data().write(to: temporaryDirectoryURL.appendingPathComponent("Ignored \(index).txt"))
+        }
+        let nested = temporaryDirectoryURL.appendingPathComponent("Folder/Nested")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try Data([0xff]).write(to: nested.appendingPathComponent("Kept.markdown"))
+        var cursor: NoteDiscoveryCursor?, notes: [NoteItem] = [], batches = 0, examined = 0
+        repeat {
+            let batch = try await service.discoverNotes(in: temporaryDirectoryURL, cursor: cursor, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+            XCTAssertLessThanOrEqual(batch.examinedCount, 256)
+            XCTAssertFalse(batch.incomplete)
+            examined += batch.examinedCount
+            notes += batch.notes; cursor = batch.cursor; batches += 1
+            XCTAssertLessThan(batches, 10)
+        } while cursor != nil
+        XCTAssertEqual(examined, 603)
+        XCTAssertGreaterThanOrEqual(batches, 3)
+        XCTAssertEqual(notes.map(\.relativePath), ["Folder/Nested/Kept.markdown"])
+    }
+
+    func testUnavailableMetadataPreservesUsableNotesAndMarksDiscoveryIncomplete() async throws {
+        let available = temporaryDirectoryURL.appendingPathComponent("Available.md")
+        let unavailable = temporaryDirectoryURL.appendingPathComponent("Unavailable.md")
+        try "body".write(to: available, atomically: true, encoding: .utf8)
+        try "body".write(to: unavailable, atomically: true, encoding: .utf8)
+        let service = VaultFileService(metadata: { url in
+            if url == unavailable { throw CocoaError(.fileReadNoPermission) }
+            return try url.resourceValues(forKeys: [.isRegularFileKey])
+        })
+        let batch = try await service.discoverNotes(in: temporaryDirectoryURL, cursor: nil, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        XCTAssertEqual(batch.notes.map(\.url), [available]); XCTAssertTrue(batch.incomplete)
+        XCTAssertNil(batch.cursor)
+    }
+
+    func testMissingRegularFileMetadataIsIncompleteRatherThanEmptySuccess() async throws {
+        try "note".write(to: temporaryDirectoryURL.appendingPathComponent("Note.md"), atomically: true, encoding: .utf8)
+        let service = VaultFileService(metadata: { _ in URLResourceValues() })
+        let batch = try await service.discoverNotes(in: temporaryDirectoryURL, cursor: nil, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        XCTAssertTrue(batch.notes.isEmpty); XCTAssertTrue(batch.incomplete); XCTAssertNil(batch.cursor)
+    }
+
+    func testPreviewSourceBudgetUTF8BoundaryEmptyAndInvalidContent() async throws {
+        let url = temporaryDirectoryURL.appendingPathComponent("Prefix.md")
+        var bytes = Data("Visible paragraph\n".utf8)
+        bytes.append(Data(repeating: 0x61, count: 64 * 1024 - bytes.count - 1))
+        bytes.append(contentsOf: "😀after the prefix".utf8)
+        try bytes.write(to: url)
+        let notes = try await service.listMarkdownNotes(in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        let preview = try await service.readPreview(for: XCTUnwrap(notes.first), request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        XCTAssertEqual(preview, .available("Visible paragraph", truncated: true))
+        XCTAssertEqual(try VaultFileService.decodePreviewPrefix(Data([0x61, 0xf0, 0x9f, 0x98]), truncated: true), "a")
+        XCTAssertThrowsError(try VaultFileService.decodePreviewPrefix(Data([0xff, 0xf0]), truncated: true))
+        XCTAssertThrowsError(try VaultFileService.decodePreviewPrefix(Data([0xe0, 0x80]), truncated: true))
+        XCTAssertThrowsError(try VaultFileService.decodePreviewPrefix(Data([0xf0, 0x9f]), truncated: false))
+        try Data().write(to: url)
+        let empty = try await service.readPreview(for: notes[0], request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        XCTAssertEqual(empty, .empty)
+        var offset = 0, requested = 0
+        let prefix = try VaultFileService.readPrefix(limit: 64 * 1024, hasMore: { offset < bytes.count }) { count in
+            requested += count; let end = min(offset + count, bytes.count)
+            defer { offset = end }; return bytes.subdata(in: offset..<end)
+        }
+        XCTAssertEqual(prefix.data.count, 64 * 1024); XCTAssertEqual(requested, 64 * 1024)
+    }
+
+    func testExactPreviewSourceLimitUsesEOFWithoutReadingAnExtraByte() async throws {
+        let url = temporaryDirectoryURL.appendingPathComponent("Exact.md")
+        var bytes = Data("Visible paragraph\n".utf8)
+        bytes.append(Data(repeating: 0x61, count: 64 * 1024 - bytes.count))
+        try bytes.write(to: url)
+        let notes = try await service.listMarkdownNotes(in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        let preview = try await service.readPreview(for: XCTUnwrap(notes.first), request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        XCTAssertEqual(preview, .available("Visible paragraph", truncated: false))
+        var offset = 0, sourceBytesRead = 0
+        let prefix = try VaultFileService.readPrefix(limit: 64 * 1024, hasMore: { offset < bytes.count }) { count in
+            let end = min(offset + count, bytes.count)
+            sourceBytesRead += end - offset
+            defer { offset = end }; return bytes.subdata(in: offset..<end)
+        }
+        XCTAssertFalse(prefix.truncated); XCTAssertEqual(sourceBytesRead, 64 * 1024)
+    }
+
+    func testEditableReadEnforcesActualByteLimitAndDoesNotChangeOversizedFile() async throws {
+        let limit = 8 * 1024 * 1024
+        let url = temporaryDirectoryURL.appendingPathComponent("Large.md")
+        let bytes = Data(repeating: 0x61, count: limit + 100)
+        try bytes.write(to: url)
+        do {
+            _ = try await service.readNote(at: url, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+            XCTFail("Oversized note must not return partial editable content")
+        } catch { XCTAssertEqual(error as? VaultError, .noteTooLarge) }
+        XCTAssertEqual(try Data(contentsOf: url), bytes)
+        var countRead = 0
+        XCTAssertThrowsError(try VaultFileService.readEditable { count in
+            // No metadata; simulate a source continuing to grow during the read.
+            countRead += count; return Data(repeating: 0x61, count: count)
+        }) { XCTAssertEqual($0 as? VaultError, .noteTooLarge) }
+        XCTAssertEqual(countRead, limit + 1)
+        var remaining = limit
+        let exact = try VaultFileService.readEditable { count in
+            let taken = min(count, remaining); remaining -= taken
+            return Data(repeating: 0x61, count: taken)
+        }
+        XCTAssertEqual(exact.utf8.count, limit)
+        var reads = 0
+        XCTAssertThrowsError(try VaultFileService.readEditable { _ in
+            reads += 1
+            if reads == 1 { return Data("partial".utf8) }
+            throw CocoaError(.fileReadUnknown)
+        })
+    }
+
     func testCreateVaultCreatesNamedDirectory() async throws {
         let vaultURL = try await service.createVault(named: "My Vault", in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
 
@@ -95,7 +294,9 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertEqual(notes.map(\.relativePath), ["Daily Note.md"])
         XCTAssertEqual(notes.first?.folderPath, "")
         XCTAssertEqual(notes.first?.folderName, "Vault")
-        XCTAssertEqual(notes.first?.previewMarkdown, "Updated body")
+        XCTAssertEqual(notes.first?.previewMarkdown, "")
+        let preview = try await service.readPreview(for: XCTUnwrap(notes.first), request: ProviderRequest(vaultURL: vaultURL))
+        XCTAssertEqual(preview, .available("Updated body", truncated: false))
         let awaitedResult2 = try await service.readNote(at: noteURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         XCTAssertEqual(awaitedResult2, "# Daily Note\nUpdated body")
     }
@@ -162,7 +363,9 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertEqual(notes.map(\.title), ["Beta", "Alpha"])
         XCTAssertEqual(notes.first?.folderPath, "Projects")
         XCTAssertEqual(notes.first?.folderName, "Projects")
-        XCTAssertEqual(notes.first?.previewMarkdown, "second note body")
+        XCTAssertEqual(notes.first?.previewMarkdown, "")
+        let preview = try await service.readPreview(for: XCTUnwrap(notes.first), request: ProviderRequest(vaultURL: vaultURL))
+        XCTAssertEqual(preview, .available("second note body", truncated: false))
         XCTAssertEqual(notes.first?.createdAt, newerCreationDate)
         XCTAssertEqual(notes.first?.lastModifiedAt, newerModifiedDate)
     }
@@ -183,14 +386,15 @@ final class VaultFileServiceTests: XCTestCase {
 
         let notes = try await service.listMarkdownNotes(in: vaultURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
 
+        let preview = try await service.readPreview(for: XCTUnwrap(notes.first), request: ProviderRequest(vaultURL: vaultURL))
         XCTAssertEqual(
-            notes.first?.previewMarkdown,
-            """
+            preview,
+            .available("""
             Intro with **bold** text.
 
             ✓ Done
             ○ Next
-            """
+            """, truncated: false)
         )
     }
 
@@ -206,7 +410,8 @@ final class VaultFileServiceTests: XCTestCase {
 
         let notes = try await service.listMarkdownNotes(in: vaultURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
 
-        XCTAssertEqual(notes.first?.previewMarkdown, "○ mention [x] syntax")
+        let preview = try await service.readPreview(for: XCTUnwrap(notes.first), request: ProviderRequest(vaultURL: vaultURL))
+        XCTAssertEqual(preview, .available("○ mention [x] syntax", truncated: false))
     }
 
     func testResolveImageURLSupportsVaultRootedAndRelativePathsWithinVault() async throws {
@@ -283,4 +488,26 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertEqual(inserted.altText, "System Diagram")
         XCTAssertEqual(inserted.markdownSource, "![System Diagram](Daily Assets/System Diagram.heic)")
     }
+}
+
+private final class RelocatingDiscoveryCoordinator: ProviderCoordinating {
+    var root: URL
+    private let logicalRoot: URL
+    private(set) var accessorActive = false
+    private(set) var readClaims: [URL] = []
+    private(set) var writeClaims: [URL] = []
+    init(root: URL) { self.root = root; logicalRoot = root }
+    func read(at url: URL, accessor: (URL) -> Void) throws {
+        readClaims.append(url)
+        accessorActive = true
+        defer { accessorActive = false }
+        accessor(url.path == logicalRoot.path ? root : url)
+    }
+    func write(at url: URL, accessor: (URL) -> Void) throws {
+        writeClaims.append(url)
+        accessorActive = true
+        defer { accessorActive = false }
+        accessor(url.path == logicalRoot.path ? root : url)
+    }
+    func cancel() {}
 }

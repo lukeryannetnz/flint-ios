@@ -4,7 +4,7 @@
 
 The system SHALL select a note automatically when notes exist and no current selection can be preserved.
 
-Note-list refresh SHALL update metadata without launching background navigation tasks. Vault opening SHALL establish a selection or pending-content state before returning usable metadata; content loads SHALL be explicit, cancellable, and tied to the current selection generation. Note creation SHALL open only its created note, and metadata refresh after saving SHALL NOT launch fallback navigation.
+Automatic note-list continuation and save metadata refresh SHALL update metadata without launching background navigation tasks. Explicit user-requested discovery refresh SHALL reconcile a missing clean selection at completion, opening the first remaining note or clearing the editor for an empty vault, only if the selection generation is unchanged. Missing destinations with unsaved text SHALL retain that text and report the failure instead of discarding it or redirecting a write. Vault opening SHALL establish a selection or pending-content state before returning usable metadata; content loads SHALL be explicit, cancellable, and tied to the current selection generation. Note creation SHALL open only its created note, and metadata refresh after saving SHALL NOT launch fallback navigation.
 
 #### Scenario: Open another vault
 
@@ -64,3 +64,39 @@ The model SHALL publish pending note selection separately from retained editor c
 - THEN the browser returns selection to the retained note
 - AND selecting the requested row again starts a fresh read without selecting another row first
 - AND publishing pending selection does not dispatch a duplicate read
+
+### Requirement: Read note content into a rich text document
+
+The system SHALL load the selected note's complete UTF-8 markdown source, bounded to 8 MiB, and present it as a native rich text document. Pending or failed loads SHALL expose progress or retry separately from editable content; the browser SHALL remain usable.
+
+#### Scenario: Select an existing note
+
+- GIVEN the active vault contains a note
+- WHEN the user selects that note
+- THEN Flint reads the note contents as UTF-8 markdown text
+- AND Flint maps the markdown into Flint's native rich text document model before display
+- AND Flint makes that note the selected note
+- AND unsaved state is cleared
+
+#### Scenario: Selected note no longer exists
+
+- GIVEN a note has been selected previously
+- WHEN Flint attempts to read or save it after the file is gone
+- THEN the operation fails with a note missing error
+
+### Requirement: Distinguish discovery and preview states
+
+The browser SHALL distinguish discovery in progress, incomplete discovery with retry, and a successfully empty vault. Visible rows SHALL request previews on demand and distinguish omitted, pending, unavailable, empty, and truncated excerpts. Refresh notes SHALL be available in the browser; invalidation after save or explicit refresh SHALL renew visible-row demand without requiring scrolling.
+
+#### Scenario: Enumeration fails after usable metadata
+
+- WHEN a later batch fails
+- THEN previously discovered notes remain visible and selectable
+- AND the browser offers discovery retry instead of showing an empty-vault success
+
+#### Scenario: Selected file is removed outside Flint
+
+- WHEN explicit discovery refresh establishes that the selected file is absent
+- THEN an unchanged clean selection opens the first remaining note or clears the editor if none remain
+- AND a later user selection takes precedence
+- AND unsaved text for the missing destination is retained with a recoverable error
