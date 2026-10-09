@@ -55,14 +55,15 @@ The system SHALL present a compact markdown-aware preview for each listed note s
 
 The system SHALL select a note automatically when notes exist and no current selection can be preserved.
 
-Note-list refresh SHALL update metadata without launching background navigation tasks. The operation that opens a vault, creates a note, or saves edits SHALL complete any required selection and content loading before returning.
+Note-list refresh SHALL update metadata without launching background navigation tasks. Vault opening SHALL establish a selection or pending-content state when usable metadata is published; content loads SHALL be explicit, cancellable, and tied to the current selection generation. Note creation SHALL open only its created note, and metadata refresh after saving SHALL NOT launch fallback navigation.
 
 #### Scenario: Open another vault
 
 - GIVEN a note from a previous vault is selected
 - WHEN Flint opens another vault
-- THEN Flint clears the previous editor state before loading the new vault
-- AND the first available note and its content are selected before vault opening returns
+- THEN Flint resolves previous unsaved edits through persistence or an explicit retain/discard choice before replacing editor state
+- AND the first available note has a selected or pending-content state when usable metadata is published
+- AND unavailable content does not block the browser
 - AND previous editor text is never saved into the new vault
 
 #### Scenario: Create a note without delayed selection changes

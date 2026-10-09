@@ -145,6 +145,46 @@ final class NoteImageWorkflowTests: XCTestCase {
         XCTAssertEqual((try snapshot())["saved"] as? String, draft)
     }
 
+    func testRetainEditsAllowsNavigationAndListsOriginalDestination() throws {
+        app.launchEnvironment["FLINT_IMAGE_TEST_NOTE"] = "Editable.md"
+        app.launchEnvironment["FLINT_IMAGE_TEST_FAIL_SAVE"] = "1"
+        app.launch()
+        let editor = app.textViews["note.editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.tap()
+        app.buttons["note.insert-image"].tap()
+        app.buttons["Files"].tap()
+        XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 10))
+        let draft = try XCTUnwrap(snapshot()["editor"] as? String)
+        app.alerts.buttons["OK"].tap()
+        showBrowser()
+        app.buttons["note.create"].tap()
+        let field = app.textFields["note.create.name"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap(); field.typeText("After Recovery")
+        app.buttons["Create"].tap()
+        let retain = app.buttons["Retain edits and continue"]
+        XCTAssertTrue(retain.waitForExistence(timeout: 10))
+        retain.tap()
+        let navigated = NSPredicate { [weak self] _, _ in
+            (try? self?.snapshot()["notePath"] as? String) == "After Recovery.md"
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: navigated, object: nil)], timeout: 10), .completed)
+        showBrowser()
+        let retainedEdits = app.buttons["note.retained-edits"]
+        XCTAssertTrue(retainedEdits.waitForExistence(timeout: 5)); retainedEdits.tap()
+        XCTAssertTrue(app.staticTexts["Editable.md"].waitForExistence(timeout: 5))
+        XCTAssertTrue(draft.contains("!["))
+        let delete = app.buttons.matching(NSPredicate(format: "identifier CONTAINS %@", "recovery.delete.")).matching(
+            NSPredicate(format: "identifier CONTAINS %@", runID)).firstMatch
+        XCTAssertTrue(delete.waitForExistence(timeout: 5)); delete.tap()
+        let removed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: delete)
+        XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 5), .completed)
+        app.buttons["Done"].tap()
+        XCTAssertEqual(try snapshot()["notePath"] as? String, "After Recovery.md")
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+
     private func verifyInsertion(source: String) throws {
         app.launchEnvironment["FLINT_IMAGE_TEST_NOTE"] = "Editable.md"
         app.launch()

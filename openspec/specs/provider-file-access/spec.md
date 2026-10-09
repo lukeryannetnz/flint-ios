@@ -2,9 +2,27 @@
 
 ## Purpose
 
-Define intended responsive, bounded, and data-safe file access for local and Files-provider vaults, including partially downloaded Dropbox content. These requirements are planned and do not claim implementation is complete.
+Define intended responsive, bounded, and data-safe file access for local and Files-provider vaults, including partially downloaded Dropbox content. Bounded asynchronous provider access, incremental note loading, demand-driven previews, and durable document recovery are implemented and simulator-tested. Prepared image loading remains planned. Physical-iPhone Dropbox acceptance remains pending; implementation of the complete specification is not claimed.
 
 ## Requirements
+
+### Requirement: Phase 4 loading and document recovery contract
+
+Discovery SHALL publish at most 64 inspected entries per worker batch, yielding provider capacity between batches. The browser SHALL show observed notes while discovery continues, expose cancellation and retry after incomplete discovery, and select an initial note once from the first usable sorted batch unless the user has already selected one. Selected reads SHALL have an independent foreground deadline. Preview demand SHALL originate from visible rows, use at most 64 KiB of source, and retain at most 4 MiB in a version-aware cache. An 8 MiB editable-note limit SHALL be enforced by bounded reads even without reliable size metadata.
+
+Failed save-before-navigation SHALL offer Stay, Retain edits and continue, and Discard edits and continue. Retain SHALL commit an atomic protected app-local recovery record containing the original vault, note destination, and exact text before navigation proceeds. Recovery records SHALL survive relaunch, remain separate from diagnostic export, and be listed with their original destination for explicit restore or deletion. Restoration SHALL require the matching vault and note, and SHALL never automatically overwrite provider content. Discard SHALL explain that an already-running write may still finish. Uncertain writes SHALL prevent overlapping saves to the same destination even after navigation.
+
+#### Scenario: Discovery fails after a batch
+
+- WHEN a later batch fails after metadata has been published
+- THEN the browser retains discovered notes and shows incomplete discovery with Retry
+- AND an empty list during discovery or after failure is not presented as an empty-vault success
+
+#### Scenario: Retained edits survive relaunch
+
+- WHEN the user retains edits after a failed save and relaunches Flint
+- THEN the recovery list identifies the original destination and restores the exact retained text only into that note
+- AND failed recovery storage leaves the current unsaved editor intact
 
 ### Requirement: Isolate blocking file and image work from the main actor
 
@@ -182,7 +200,7 @@ Vault-file methods SHALL accept a request carrying vault-root identity, foregrou
 
 ### Requirement: Keep uncertain mutations separate from retries
 
-The executor SHALL retain an actual mutation outcome for the owning attempt after logical timeout or cancellation. A retry SHALL first establish whether the original write/create finished, without issuing another mutation while it drains. Saves SHALL snapshot their original text, destination and revision; an asynchronous completion SHALL not clear newer edits. Navigation SHALL first save dirty text and remain at its original destination if saving cannot be established. Explicit retain/discard recovery storage is added in phase 4.
+The executor SHALL retain an actual mutation outcome for the owning attempt after logical timeout or cancellation. A retry SHALL first establish whether the original write/create finished, without issuing another mutation while it drains. Saves SHALL snapshot their original text, destination and revision; an asynchronous completion SHALL not clear newer edits. Navigation SHALL first save dirty text and remain at its original destination if saving cannot be established, unless the user explicitly retains or discards edits using phase 4 recovery.
 
 #### Scenario: Creation finishes after its deadline
 
@@ -248,3 +266,23 @@ Actual mutation outcomes SHALL preserve created URLs, complete image-import resu
 - WHEN a timed-out import has actually failed or never started
 - THEN a new source selection removes that resolved failure before admission
 - AND no Recover action is required to start the replacement
+
+### Requirement: Present edit recovery after dismissing source sheets
+
+Navigation initiated by a create-note sheet or vault picker SHALL begin only after that sheet has dismissed. The retain/discard decision SHALL render directly from model state in the root presentation, without relying on a second UIKit modal or treating an automatic presentation dismissal as a user choice. Dismissing a sheet without confirming a destination SHALL not navigate.
+
+#### Scenario: A new-note action needs edit recovery
+
+- WHEN the user confirms creation while the current note cannot be saved
+- THEN the new-note sheet dismisses before the recovery decision is presented
+- AND the requested name and destination folder are preserved until the decision completes
+
+### Requirement: Recovery-copy actions remain independent
+
+Deleting a retained copy SHALL only remove that copy. It SHALL not restore text, navigate to the original note, or start a provider save. Restore and Delete controls SHALL have independent hit targets in the recovery list.
+
+#### Scenario: Delete after navigating away
+
+- WHEN the user deletes a recovery copy while another note is selected
+- THEN the selected note and its editor remain unchanged
+- AND the recovery list remains open until explicitly dismissed
