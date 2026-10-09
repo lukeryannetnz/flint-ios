@@ -6,6 +6,7 @@ enum VaultError: LocalizedError, Equatable {
     case invalidName(String)
     case itemAlreadyExists(String)
     case inaccessibleVault
+    case noteTooLarge
     case noteMissing
 
     var errorDescription: String? {
@@ -18,6 +19,8 @@ enum VaultError: LocalizedError, Equatable {
             return "\"\(name)\" already exists."
         case .inaccessibleVault:
             return "Flint could not access that vault."
+        case .noteTooLarge:
+            return "This note exceeds Flint’s 8 MiB editing limit. The file has not been changed."
         case .noteMissing:
             return "The selected note could not be found."
         }
@@ -27,6 +30,9 @@ enum VaultError: LocalizedError, Equatable {
 protocol VaultFileServing {
     func createVault(named name: String, in parentURL: URL, request: ProviderRequest) async throws -> URL
     func listMarkdownNotes(in vaultURL: URL, request: ProviderRequest) async throws -> [NoteItem]
+    func discoverNotes(in vaultURL: URL, request: ProviderRequest, onBatch: @escaping ([NoteItem]) async -> Void) async throws
+    func preview(for note: NoteItem, request: ProviderRequest) async throws -> NotePreview
+    func invalidatePreviews()
     func createNote(named name: String, in directoryURL: URL, request: ProviderRequest) async throws -> URL
     func readNote(at url: URL, request: ProviderRequest) async throws -> String
     func saveNote(_ text: String, at url: URL, request: ProviderRequest) async throws
@@ -34,13 +40,51 @@ protocol VaultFileServing {
     func importCameraImage(_ image: UIImage, into noteURL: URL, vaultURL: URL, request: ProviderRequest) async throws -> InsertedNoteImage
 }
 
+extension VaultFileServing {
+    func discoverNotes(in vaultURL: URL, request: ProviderRequest, onBatch: @escaping ([NoteItem]) async -> Void) async throws {
+        let notes = try await listMarkdownNotes(in: vaultURL, request: request)
+        await onBatch(notes)
+    }
+    func preview(for note: NoteItem, request: ProviderRequest) async throws -> NotePreview {
+        note.previewMarkdown.isEmpty ? .empty : .ready(note.previewMarkdown, truncated: false)
+    }
+    func invalidatePreviews() {}
+}
+
+/// Used by one sequential discovery loop. Each next batch runs on a provider worker.
+private final class NoteDiscoveryCursor {
+    var enumerator: FileManager.DirectoryEnumerator?
+    var error: Error?
+    var done = false
+    var lease: SecurityScopeLease?
+}
+
 final class VaultFileService: VaultFileServing {
     private let fileManager: FileManager
     private let executor: ProviderExecutor
+    private struct PreviewEntry {
+        let modified: Date?
+        let size: Int?
+        let preview: NotePreview
+        let cost: Int
+    }
+    private let previewCacheLimit: Int
+    private let previewLock = NSLock()
+    private var previewCache: [URL: PreviewEntry] = [:]
+    private var previewOrder: [URL] = []
+    private var previewBytes = 0
+    private var previewEpoch = 0
+    var cachedPreviewBytes: Int { previewLock.lock(); defer { previewLock.unlock() }; return previewBytes }
+    func invalidatePreviews() {
+        previewLock.lock(); defer { previewLock.unlock() }
+        previewCache = [:]; previewOrder = []; previewBytes = 0; previewEpoch += 1
+    }
 
-    init(fileManager: FileManager = .default, executor: ProviderExecutor = .shared) {
+
+    init(fileManager: FileManager = .default, executor: ProviderExecutor = .shared, previewCacheLimit: Int = 4 * 1024 * 1024) {
         self.fileManager = fileManager
         self.executor = executor
+        self.previewCacheLimit = max(0, previewCacheLimit)
     }
 
 
@@ -50,8 +94,118 @@ final class VaultFileService: VaultFileServing {
         }
     }
     func listMarkdownNotes(in vaultURL: URL, request: ProviderRequest) async throws -> [NoteItem] {
-        try await executor.execute(request, step: .enumeration) {
-            try self.listMarkdownNotesBlocking(in: vaultURL, context: $0)
+        var result: [NoteItem] = []
+        try await discoverNotes(in: vaultURL, request: request) { result += $0 }
+        return Self.sortedNotes(result)
+    }
+
+    static func sortedNotes(_ notes: [NoteItem]) -> [NoteItem] {
+        notes.sorted {
+            if $0.lastModifiedAt != $1.lastModifiedAt { return $0.lastModifiedAt > $1.lastModifiedAt }
+            return $0.relativePath.localizedCaseInsensitiveCompare($1.relativePath) == .orderedAscending
+        }
+    }
+
+    func discoverNotes(in vaultURL: URL, request: ProviderRequest, onBatch: @escaping ([NoteItem]) async -> Void) async throws {
+        let cursor = NoteDiscoveryCursor()
+        while true {
+            let batch = try await executor.execute(request, step: .enumeration) { context -> ([NoteItem], Bool, Error?) in
+                try context.coordinated(.coordinationRead, at: vaultURL) { root in
+                    if cursor.enumerator == nil {
+                        cursor.lease = context.primaryLease
+                        guard self.fileManager.fileExists(atPath: root.path) else { throw VaultError.inaccessibleVault }
+                        cursor.enumerator = self.fileManager.enumerator(at: root,
+                            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .creationDateKey, .contentModificationDateKey],
+                            options: [.skipsHiddenFiles], errorHandler: { _, error in cursor.error = error; return false })
+                        guard cursor.enumerator != nil else { throw VaultError.inaccessibleVault }
+                    }
+                    var notes: [NoteItem] = []
+                    for _ in 0..<64 {
+                        try context.checkCancellation()
+                        guard let url = cursor.enumerator?.nextObject() as? URL else { cursor.done = true; break }
+                        guard ["md", "markdown"].contains(url.pathExtension.lowercased()) else { continue }
+                        do {
+                            let values = try DebugLog.shared.measure(.metadata, file: url) {
+                                try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .creationDateKey, .contentModificationDateKey])
+                            }
+                            guard let regular = values.isRegularFile else { throw VaultError.inaccessibleVault }
+                            guard regular, values.isSymbolicLink != true else { continue }
+                            let path = String(url.path.dropFirst(root.path.count + 1))
+                            let folder = path.split(separator: "/").dropLast().joined(separator: "/")
+                            notes.append(NoteItem(url: url, title: url.deletingPathExtension().lastPathComponent,
+                                relativePath: path, folderPath: folder, folderName: folder.split(separator: "/").last.map(String.init) ?? "Vault",
+                                previewMarkdown: "", createdAt: values.creationDate ?? .distantPast,
+                                lastModifiedAt: values.contentModificationDate ?? .distantPast))
+                        } catch {
+                            DebugLog.shared.begin(.metadata, file: url).finish(.failure, error: error)
+                            cursor.error = error
+                        }
+                    }
+                    DebugLog.shared.observe(.enumeration, count: notes.count)
+                    return (Self.sortedNotes(notes), cursor.done, cursor.error)
+                }
+            }
+            await onBatch(batch.0)
+            if let error = batch.2 { throw error }
+            if batch.1 { return }
+            // A new admission lets queued explicit reads/saves precede the next metadata batch.
+            await Task.yield()
+        }
+    }
+
+    func preview(for note: NoteItem, request: ProviderRequest) async throws -> NotePreview {
+        try await executor.execute(request, step: .preview) { context in
+            try context.coordinated(.coordinationRead, at: note.url) { url in
+                var observedURL = url
+                observedURL.removeAllCachedResourceValues()
+                let values = try? observedURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+                // Opening before a cache hit also verifies that a cached empty note still exists.
+                let handle = try FileHandle(forReadingFrom: url)
+                defer { try? handle.close() }
+                self.previewLock.lock()
+                let epoch = self.previewEpoch
+                if let values, let cached = self.previewCache[note.url],
+                   cached.modified == values.contentModificationDate, cached.size == values.fileSize {
+                    self.previewOrder.removeAll { $0 == note.url }; self.previewOrder.append(note.url)
+                    self.previewLock.unlock(); return cached.preview
+                }
+                self.previewLock.unlock()
+                var data = Data()
+                while data.count < 64 * 1024 {
+                    try context.checkCancellation()
+                    let chunk = try handle.read(upToCount: 64 * 1024 - data.count) ?? Data()
+                    if chunk.isEmpty { break }
+                    data.append(chunk)
+                }
+                let truncated = data.count == 64 * 1024
+                var complete = data
+                var contents = String(data: complete, encoding: .utf8)
+                if contents == nil && truncated {
+                    for _ in 0..<3 where !complete.isEmpty {
+                        complete.removeLast()
+                        contents = String(data: complete, encoding: .utf8)
+                        if contents != nil { break }
+                    }
+                }
+                guard let contents else { throw CocoaError(.fileReadInapplicableStringEncoding) }
+                let preview: NotePreview = data.isEmpty ? .empty : .ready(self.makePreviewMarkdown(contents: contents, title: note.title), truncated: truncated)
+                // Charge a minimum cost so empty entries also stay bounded.
+                let cost = 256 + preview.text.utf8.count + note.url.absoluteString.utf8.count * 2
+                self.previewLock.lock(); defer { self.previewLock.unlock() }
+                guard epoch == self.previewEpoch else { return preview }
+                if let old = self.previewCache.removeValue(forKey: note.url) { self.previewBytes -= old.cost }
+                self.previewOrder.removeAll { $0 == note.url }
+                while self.previewBytes + cost > self.previewCacheLimit, let oldest = self.previewOrder.first {
+                    self.previewOrder.removeFirst()
+                    if let old = self.previewCache.removeValue(forKey: oldest) { self.previewBytes -= old.cost }
+                }
+                if cost <= self.previewCacheLimit {
+                    self.previewCache[note.url] = PreviewEntry(modified: values?.contentModificationDate, size: values?.fileSize, preview: preview, cost: cost)
+                    self.previewOrder.append(note.url); self.previewBytes += cost
+                }
+                DebugLog.shared.observe(.preview, bytes: data.count)
+                return preview
+            }
         }
     }
     func createNote(named name: String, in directoryURL: URL, request: ProviderRequest) async throws -> URL {
@@ -98,65 +252,6 @@ final class VaultFileService: VaultFileServing {
         }
     }
 
-    private func listMarkdownNotesBlocking(in vaultURL: URL, context: ProviderWorkContext) throws -> [NoteItem] {
-        return try DebugLog.shared.measure(.enumeration, file: vaultURL) {
-            try context.coordinated(.coordinationRead, at: vaultURL) { coordinatedVaultURL in
-                guard fileManager.fileExists(atPath: coordinatedVaultURL.path) else {
-                    throw VaultError.inaccessibleVault
-                }
-
-                let enumerator = fileManager.enumerator(
-                    at: coordinatedVaultURL,
-                    includingPropertiesForKeys: [.isRegularFileKey, .creationDateKey, .contentModificationDateKey],
-                    options: [.skipsHiddenFiles]
-                )
-
-                let notes = try (enumerator?.compactMap { $0 as? URL } ?? [])
-                    .filter { url in
-                        let ext = url.pathExtension.lowercased()
-                        return ext == "md" || ext == "markdown"
-                    }
-                    .map { url in
-                        try context.checkCancellation()
-                        let relativePath = url.path.replacingOccurrences(
-                            of: coordinatedVaultURL.path + "/",
-                            with: ""
-                        )
-                        let folderURL = url.deletingLastPathComponent()
-                        let relativeFolderPath = folderURL.path.replacingOccurrences(
-                            of: coordinatedVaultURL.path,
-                            with: ""
-                        )
-                        let normalizedFolderPath = relativeFolderPath
-                            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                        let resourceValues = try? DebugLog.shared.measure(.metadata, file: url) { try url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey]) }
-                        let previewMarkdown = (try? makePreviewMarkdown(for: url)) ?? ""
-
-                        return NoteItem(
-                            url: url,
-                            title: url.deletingPathExtension().lastPathComponent,
-                            relativePath: relativePath,
-                            folderPath: normalizedFolderPath,
-                            folderName: normalizedFolderPath.components(separatedBy: "/").last.flatMap { $0.isEmpty ? nil : $0 } ?? "Vault",
-                            previewMarkdown: previewMarkdown,
-                            createdAt: resourceValues?.creationDate ?? .distantPast,
-                            lastModifiedAt: resourceValues?.contentModificationDate ?? .distantPast
-                        )
-                    }
-                    .sorted { (lhs: NoteItem, rhs: NoteItem) in
-                        if lhs.lastModifiedAt != rhs.lastModifiedAt {
-                            return lhs.lastModifiedAt > rhs.lastModifiedAt
-                        }
-
-                        return lhs.relativePath.localizedCaseInsensitiveCompare(rhs.relativePath) == .orderedAscending
-                    }
-
-                DebugLog.shared.observe(.enumeration, count: notes.count)
-                return notes
-            }
-        }
-    }
-
     private func createNoteBlocking(named name: String, in directoryURL: URL, context: ProviderWorkContext) throws -> URL {
         return try DebugLog.shared.measure(.noteCreate, file: directoryURL) {
             let fileName = try validatedMarkdownFilename(name)
@@ -181,7 +276,18 @@ final class VaultFileService: VaultFileServing {
                     throw VaultError.noteMissing
                 }
 
-                let text = try String(contentsOf: coordinatedURL, encoding: .utf8)
+                let handle = try FileHandle(forReadingFrom: coordinatedURL)
+                defer { try? handle.close() }
+                let limit = 8 * 1024 * 1024
+                var data = Data()
+                while true {
+                    try context.checkCancellation()
+                    let chunk = try handle.read(upToCount: min(64 * 1024, limit + 1 - data.count)) ?? Data()
+                    if chunk.isEmpty { break }
+                    data.append(chunk)
+                    guard data.count <= limit else { throw VaultError.noteTooLarge }
+                }
+                guard let text = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
                 DebugLog.shared.observe(.noteRead, bytes: text.utf8.count)
                 return text
             }
@@ -199,6 +305,7 @@ final class VaultFileService: VaultFileServing {
                 }
 
                 try text.write(to: coordinatedURL, atomically: true, encoding: .utf8)
+                invalidatePreviews()
                 DebugLog.shared.observe(.noteSave, bytes: text.utf8.count)
             }
         }
@@ -279,64 +386,61 @@ final class VaultFileService: VaultFileServing {
         return trimmed.lowercased().hasSuffix(".md") ? trimmed : "\(trimmed).md"
     }
 
-    private func makePreviewMarkdown(for url: URL) throws -> String {
-        return try DebugLog.shared.measure(.preview, file: url) {
-            let contents = try String(contentsOf: url, encoding: .utf8)
-            let normalized = MarkdownDocument.normalizedMarkdown(
-                noteTitle: url.deletingPathExtension().lastPathComponent,
-                markdown: contents
-            )
-            let lines = normalized.components(separatedBy: .newlines)
-            var previewLines: [String] = []
-            var characterCount = 0
-            var isInsideCodeFence = false
+    private func makePreviewMarkdown(contents: String, title: String) -> String {
+        let normalized = MarkdownDocument.normalizedMarkdown(
+            noteTitle: title,
+            markdown: contents
+        )
+        let lines = normalized.components(separatedBy: .newlines)
+        var previewLines: [String] = []
+        var characterCount = 0
+        var isInsideCodeFence = false
 
-            for line in lines {
-                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let fence = fencedCodeDelimiter(in: trimmed) {
-                    isInsideCodeFence.toggle()
-                    if isInsideCodeFence, previewLines.isEmpty {
-                        previewLines.append("`\(fence)`")
-                        characterCount += fence.count + 2
-                    }
-                    continue
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let fence = fencedCodeDelimiter(in: trimmed) {
+                isInsideCodeFence.toggle()
+                if isInsideCodeFence, previewLines.isEmpty {
+                    previewLines.append("`\(fence)`")
+                    characterCount += fence.count + 2
                 }
-
-                guard !isInsideCodeFence else { continue }
-
-                if trimmed.isEmpty {
-                    if !previewLines.isEmpty, previewLines.last != "" {
-                        previewLines.append("")
-                    }
-                    continue
-                }
-
-                if isTableSeparator(trimmed) {
-                    continue
-                }
-
-                let previewLine = previewDisplayLine(for: trimmed)
-                guard !previewLine.isEmpty else { continue }
-
-                let separatorCost = previewLines.isEmpty ? 0 : 1
-                if characterCount + previewLine.count + separatorCost > 220 {
-                    break
-                }
-
-                previewLines.append(previewLine)
-                characterCount += previewLine.count + separatorCost
-
-                if previewLines.count >= 4 {
-                    break
-                }
+                continue
             }
 
-            while previewLines.last == "" {
-                previewLines.removeLast()
+            guard !isInsideCodeFence else { continue }
+
+            if trimmed.isEmpty {
+                if !previewLines.isEmpty, previewLines.last != "" {
+                    previewLines.append("")
+                }
+                continue
             }
 
-            return previewLines.joined(separator: "\n")
+            if isTableSeparator(trimmed) {
+                continue
+            }
+
+            let previewLine = previewDisplayLine(for: trimmed)
+            guard !previewLine.isEmpty else { continue }
+
+            let separatorCost = previewLines.isEmpty ? 0 : 1
+            if characterCount + previewLine.count + separatorCost > 220 {
+                break
+            }
+
+            previewLines.append(previewLine)
+            characterCount += previewLine.count + separatorCost
+
+            if previewLines.count >= 4 {
+                break
+            }
         }
+
+        while previewLines.last == "" {
+            previewLines.removeLast()
+        }
+
+        return previewLines.joined(separator: "\n")
     }
 
     private func previewDisplayLine(for line: String) -> String {

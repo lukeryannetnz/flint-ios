@@ -1,5 +1,20 @@
 import Foundation
 
+enum NotePreview: Equatable {
+    case omitted, loading, unavailable, empty
+    case ready(String, truncated: Bool)
+
+    var text: String {
+        switch self {
+        case .omitted: return "Preview not requested."
+        case .loading: return "Loading preview…"
+        case .unavailable: return "Preview unavailable."
+        case .empty: return "Empty note."
+        case let .ready(text, _): return text.isEmpty ? "No preview text." : text
+        }
+    }
+}
+
 struct Vault: Equatable {
     let name: String
     let url: URL

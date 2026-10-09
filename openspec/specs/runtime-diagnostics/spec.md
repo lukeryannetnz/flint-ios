@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the intended logging, local performance telemetry, crash evidence, and recovery behavior needed to diagnose physical-device failures with partially downloaded Files-provider vaults. The diagnostic journal foundation, platform evidence collection, restoration safety, and foreground monitoring are implemented and simulator-tested. Asynchronous provider access and diagnostic sharing remain planned. Physical-iPhone Dropbox validation remains pending; this status does not establish that the reported provider hangs or terminations are resolved.
+Define the intended logging, local performance telemetry, crash evidence, and recovery behavior needed to diagnose physical-device failures with partially downloaded Files-provider vaults. The diagnostic journal foundation, platform evidence collection, restoration safety, and foreground monitoring are implemented and simulator-tested. Bounded asynchronous provider access, incremental note loading, document recovery, and bounded recovery sharing are implemented. Prepared image loading and the complete diagnostic preview/clear-history workflow remain planned. Physical-iPhone Dropbox validation remains pending; this status does not establish that the reported provider hangs or terminations are resolved.
 
 ## Requirements
 

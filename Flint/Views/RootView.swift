@@ -31,6 +31,27 @@ struct RootView: View {
                     .onAppear { DebugLog.shared.observe(.firstUsableScreen) }
             }
         }
+        .allowsHitTesting(!model.needsNavigationRecovery)
+        .accessibilityHidden(model.needsNavigationRecovery)
+        .overlay {
+            if model.needsNavigationRecovery {
+                ZStack {
+                    Color.black.opacity(0.35).ignoresSafeArea().onTapGesture {}
+                    VStack(spacing: 18) {
+                        Text("Edits could not be saved").font(.title2.bold())
+                        Text("Retain saves a local copy for the original note. Discard removes pending edits from the editor; an already-running provider write may still finish.")
+                        Button("Retain edits and continue") { model.resolveNavigationRecovery(.retain) }
+                            .buttonStyle(.borderedProminent)
+                        Button("Discard edits and continue", role: .destructive) { model.resolveNavigationRecovery(.discard) }
+                        Button("Stay in this note") { model.resolveNavigationRecovery(.stay) }
+                    }
+                    .padding(24)
+                    .frame(maxWidth: 420)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+                    .padding(24)
+                }
+            }
+        }
         .sheet(item: $model.diagnosticShare, onDismiss: { model.finishDiagnosticShare() }) { item in
             DiagnosticActivityView(url: item.url)
         }
