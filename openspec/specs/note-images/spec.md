@@ -121,3 +121,42 @@ The system SHALL choose sensible default display sizing for inserted note images
 #### Scenario: Insert a very small image
 - **WHEN** the user inserts an image whose source dimensions are smaller than Flint's normal content width
 - **THEN** Flint avoids scaling the image up so aggressively that it appears blurry
+
+### Requirement: Prepare images before rendering
+
+Slow image files must not prevent users from reading or editing note text. Flint SHALL show a loading placeholder while a visible image loads. Failed images SHALL offer retry without changing the note's Markdown or caption.
+
+Image path validation, including checks for symbolic links that leave the vault, SHALL run on a file worker. Text construction, layout, viewer updates, and accessibility queries SHALL not read image files. The viewer SHALL receive prepared images and allow immediate dismissal during loading.
+
+Image reads SHALL use the shared provider executor and retain vault access until the worker finishes. Decoding SHALL use one separate worker. Inline images SHALL have a longest edge of at most 2048 pixels; viewer images SHALL have a longest edge of at most 4096 pixels. The reusable decoded cache SHALL use at most 32 MiB and identify images by file version and requested size. Memory warnings SHALL clear it and cancel optional queued requests.
+
+#### Scenario: Scroll or change notes while an image loads
+
+- WHEN an image leaves the visible area or its document is replaced
+- THEN its optional request is cancelled
+- AND late completion cannot update the replacement document
+- AND ordinary layout changes use prepared pixels without reading the source again
+
+#### Scenario: Retry or reopen an image after its file changes
+
+- WHEN the user retries loading or opens an image again
+- THEN Flint checks the observed file version on a worker before reusing cached pixels
+- AND it loads the changed image if the observed version differs
+
+### Requirement: Import selected images without UI-thread file copies
+
+Users must be able to keep using Flint while an image is imported. Files selections SHALL pass to the existing asynchronous importer without a synchronous staging copy. Photo-library temporary files SHALL be copied before their callback returns, on a background worker, and removed after import finishes. Camera encoding SHALL stay on the provider worker. Waiting for Photos, copying its callback file, and importing that file SHALL share one 30-second foreground deadline. Staging failures SHALL be shown to the user.
+
+#### Scenario: Leave a note during import
+
+- WHEN a selected image finishes importing after the user changes notes
+- THEN its result stays associated with the original note
+- AND it does not insert into the new note or delete an asset referenced by saved or unsaved text
+
+#### Scenario: The provider moves the vault before an image read
+
+- GIVEN a note's image reference belongs to the selected vault
+- WHEN the provider supplies a different folder address for that vault
+- THEN the image worker resolves the reference under that current folder
+- AND it uses a separate read claim for the image itself
+- AND the note and stored image reference keep their original logical addresses

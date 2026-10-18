@@ -2,60 +2,84 @@ import Foundation
 import UIKit
 
 final class FlintMarkdownImageAttachment: NSTextAttachment {
+    enum LoadState { case pending, loaded, failed }
     let markdownSource: String
     let assetURL: URL?
     let altText: String
-
+    let reference: NoteImageReference?
+    private(set) var loadState: LoadState = .pending
+    private var preparedImage: UIImage?
+    private var loadTask: Task<Void, Never>?
+    private var loadID: UUID?
     private var lastAppliedWidth: CGFloat = -1
 
-    init(markdownSource: String, assetURL: URL?, altText: String) {
-        self.markdownSource = markdownSource
-        self.assetURL = assetURL
-        self.altText = altText
+    init(markdownSource: String, assetURL: URL?, altText: String, vaultURL: URL? = nil) {
+        self.markdownSource = markdownSource; self.assetURL = assetURL; self.altText = altText
+        reference = assetURL.flatMap { asset in vaultURL.map { NoteImageReference(assetURL: asset, vaultURL: $0) } }
         super.init(data: nil, ofType: nil)
-        image = FlintImageAttachmentRenderer.renderThumbnail(assetURL: assetURL, altText: altText, availableWidth: 320)
-        bounds = CGRect(x: 0, y: 6, width: image?.size.width ?? 220, height: image?.size.height ?? 160)
+        if reference == nil { loadState = .failed }
+        applyLayout(for: 320)
     }
-
-    required init?(coder: NSCoder) {
-        return nil
-    }
+    required init?(coder: NSCoder) { return nil }
+    deinit { loadTask?.cancel() }
 
     func applyLayout(for availableWidth: CGFloat) {
         guard availableWidth > 1, abs(lastAppliedWidth - availableWidth) > 0.5 else { return }
-        let rendered = FlintImageAttachmentRenderer.renderThumbnail(
-            assetURL: assetURL,
-            altText: altText,
-            availableWidth: availableWidth
-        )
-        image = rendered
-        bounds = CGRect(origin: CGPoint(x: 0, y: 6), size: rendered.size)
+        let title = loadState == .pending ? "Loading image…" : "Image unavailable. Tap to retry."
+        let rendered = FlintImageAttachmentRenderer.renderThumbnail(image: preparedImage, title: title, availableWidth: availableWidth)
+        image = rendered; bounds = CGRect(origin: CGPoint(x: 0, y: 6), size: rendered.size)
         lastAppliedWidth = availableWidth
     }
 
+    func load(using loader: PreparedImageLoader = .shared, changed: @escaping () -> Void) {
+        guard let reference, loadTask == nil, loadState == .pending else { return }
+        let id = UUID(); loadID = id
+        loadTask = Task { @MainActor [weak self] in
+            do {
+                let value = try await loader.image(for: reference, size: .inline)
+                guard !Task.isCancelled, let self, self.loadID == id else { return }
+                self.preparedImage = value.image; self.loadState = .loaded
+            } catch {
+                guard !Task.isCancelled, let self, self.loadID == id else { return }
+                self.loadState = .failed
+            }
+            guard let self, self.loadID == id else { return }
+            self.loadTask = nil
+            let width = self.lastAppliedWidth; self.lastAppliedWidth = -1
+            self.applyLayout(for: width); changed()
+        }
+    }
+
+    func cancelLoading() { loadID = nil; loadTask?.cancel(); loadTask = nil }
+    func releaseOffscreenPixels() {
+        cancelLoading()
+        guard loadState == .loaded else { return }
+        preparedImage = nil; loadState = .pending
+        // Preserve the measured attachment bounds so scrolling does not move the text.
+        image = FlintImageAttachmentRenderer.renderThumbnail(image: nil, title: "Loading image…",
+            availableWidth: lastAppliedWidth)
+    }
+    func retry() {
+        guard reference != nil else { return }
+        cancelLoading(); preparedImage = nil; loadState = .pending
+        let width = lastAppliedWidth; lastAppliedWidth = -1; applyLayout(for: width)
+    }
     var viewerItem: NoteImageViewerItem? {
-        guard let assetURL else { return nil }
-        return NoteImageViewerItem(assetURL: assetURL, altText: altText)
+        guard let reference else { return nil }
+        return NoteImageViewerItem(reference: reference, altText: altText)
     }
 }
 
 private enum FlintImageAttachmentRenderer {
-    static func renderThumbnail(assetURL: URL?, altText: String, availableWidth: CGFloat) -> UIImage {
-        let preparation = DebugLog.shared.begin(.imagePrepare, file: assetURL)
-        defer { preparation.finish(.success) }
-        if let assetURL,
-           let sourceImage = loggedImage(at: assetURL) {
-            return renderImageCard(image: sourceImage, altText: altText, availableWidth: availableWidth)
-        }
-
-        return renderPlaceholderCard(title: altText.isEmpty ? "Image unavailable" : altText, availableWidth: availableWidth)
-    }
-
-    private static func loggedImage(at url: URL) -> UIImage? {
-        let read = DebugLog.shared.begin(.imageRead, file: url)
-        let image = UIImage(contentsOfFile: url.path)
-        read.finish(image == nil ? .failure : .success)
-        return image
+    private static let placeholders: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 8
+        cache.totalCostLimit = 4 * 1024 * 1024
+        return cache
+    }()
+    static func renderThumbnail(image: UIImage?, title: String, availableWidth: CGFloat) -> UIImage {
+        if let image { return renderImageCard(image: image, altText: "", availableWidth: availableWidth) }
+        return renderPlaceholderCard(title: title, availableWidth: availableWidth)
     }
 
     private static func renderImageCard(image: UIImage, altText: String, availableWidth: CGFloat) -> UIImage {
@@ -98,8 +122,10 @@ private enum FlintImageAttachmentRenderer {
 
     private static func renderPlaceholderCard(title: String, availableWidth: CGFloat) -> UIImage {
         let size = CGSize(width: max(180, min(availableWidth * 0.72, 320)), height: 168)
+        let key = "\(size.width)::\(title)" as NSString
+        if let cached = placeholders.object(forKey: key) { return cached }
         let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { context in
+        let rendered = renderer.image { context in
             let rect = CGRect(origin: .zero, size: size)
             let path = UIBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), cornerRadius: 24)
             UIColor.secondarySystemBackground.setFill()
@@ -123,6 +149,9 @@ private enum FlintImageAttachmentRenderer {
             let textRect = CGRect(x: 18, y: 92, width: size.width - 36, height: 40)
             (title.isEmpty ? "Image unavailable" : title).draw(in: textRect, withAttributes: attributes)
         }
+        let cost = rendered.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
+        placeholders.setObject(rendered, forKey: key, cost: cost)
+        return rendered
     }
 
     private static func targetWidth(for imageSize: CGSize, availableWidth: CGFloat) -> CGFloat {

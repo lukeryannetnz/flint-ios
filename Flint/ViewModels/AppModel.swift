@@ -558,9 +558,9 @@ final class AppModel: ObservableObject {
         } catch { DebugLog.shared.begin(.metadata).finish(.failure, error: error) }
     }
 
-    func importImage(from sourceURL: URL, preferredFilename: String? = nil) async -> InsertedNoteImage? {
+    func importImage(from sourceURL: URL, preferredFilename: String? = nil, sourceLifetime: StagedPhotoFile? = nil) async -> InsertedNoteImage? {
         guard let note = selectedNote, let root = activeVault?.url else { return nil }
-        return await performImageImport(note: note, root: root) { request in
+        return await performImageImport(note: note, root: root, sourceLifetime: sourceLifetime) { request in
             try await self.fileService.importImage(from: sourceURL, preferredFilename: preferredFilename,
                 into: note.url, vaultURL: root, request: request)
         }
@@ -594,12 +594,13 @@ final class AppModel: ObservableObject {
         return true
     }
 
-    private func performImageImport(note: NoteItem, root: URL,
+    private func performImageImport(note: NoteItem, root: URL, sourceLifetime: StagedPhotoFile? = nil,
         work: (ProviderRequest) async throws -> InsertedNoteImage) async -> InsertedNoteImage? {
         guard selectedNote?.url == note.url, activeVault?.url == root, canStartImageImport(for: note.url) else { return nil }
         let document = documentGeneration, vault = vaultGeneration
         let importID = UUID(); inFlightImageImports[note.url] = importID
-        let request = ProviderRequest(vaultURL: root, attempt: attemptFactory())
+        var request = ProviderRequest(vaultURL: root, attempt: sourceLifetime?.attempt ?? attemptFactory())
+        request.sourceLifetime = sourceLifetime
         isBusy = true
         defer {
             if inFlightImageImports[note.url] == importID { inFlightImageImports.removeValue(forKey: note.url) }

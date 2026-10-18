@@ -64,8 +64,10 @@ enum ImageWorkflowTestSupport {
         return root
     }
     @MainActor
-    static func snapshot(model: AppModel) -> String {
+    static func snapshot(model: AppModel) async -> String {
         guard let note = model.selectedNote, let root else { return "{}" }
+        let editor = model.noteText, unsaved = model.hasUnsavedChanges
+        return await Task.detached(priority: .utility) {
         let saved = (try? String(contentsOf: note.url, encoding: .utf8)) ?? ""
         func assets(in markdown: String) -> [[String: Any]] {
             let pattern = #"!\[[^\]]*\]\(([^\)]+)\)"#
@@ -78,15 +80,20 @@ enum ImageWorkflowTestSupport {
                     .resolvingSymlinksInPath().standardizedFileURL
                 let insideManaged = resolved?.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL == managed
                 return ["reference": ref, "managed": insideManaged,
-                        "readable": resolved.flatMap { UIImage(contentsOfFile: $0.path) } != nil]
+                        "readable": resolved.map { url in
+                            guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+                            defer { try? handle.close() }
+                            return ((try? handle.read(upToCount: 1))?.count ?? 0) == 1
+                        } ?? false]
             }
         }
-        let value: [String: Any] = ["notePath": note.relativePath, "saved": saved, "editor": model.noteText,
-                                   "unsaved": model.hasUnsavedChanges, "assets": assets(in: saved), "editorAssets": assets(in: model.noteText),
+        let value: [String: Any] = ["notePath": note.relativePath, "saved": saved, "editor": editor,
+                                   "unsaved": unsaved, "assets": assets(in: saved), "editorAssets": assets(in: editor),
                                    "sourceExists": sourceURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false]
         guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
               let text = String(data: data, encoding: .utf8) else { return "{}" }
         return text
+        }.value
     }
 }
 #endif

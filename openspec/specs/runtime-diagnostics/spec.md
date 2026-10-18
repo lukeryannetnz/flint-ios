@@ -8,7 +8,9 @@ This spec defines debug logs, performance measurements, platform crash evidence,
 
 A file provider is a service such as Dropbox that supplies files through Files. A bookmark is saved iOS permission data for reopening a folder. The main actor manages interface state on the screen-update thread. An accessor is the part of a coordinated file operation that performs the read or write. A restoration marker is a small local record of whether reopening the saved vault started and finished.
 
-Status: debug logging, platform evidence collection, restoration safety, and foreground monitoring are implemented and simulator-tested. Bounded asynchronous file access, incremental note loading, document recovery, and bounded recovery sharing are also implemented. Prepared image loading and the complete diagnostic preview and clear-history workflow remain planned. Physical-iPhone Dropbox validation is pending. The reported provider hangs or unexpected terminations have not been established as resolved.
+Status: debug logging, platform evidence collection, restoration safety, and foreground monitoring are implemented and simulator-tested. Bounded asynchronous file access, incremental note loading, document recovery, and bounded recovery sharing are also implemented. Prepared image loading is also implemented and has passed automated fixture tests on the simulator and a physical iPhone.
+
+The complete diagnostic preview and clear-history workflow remains planned. Real-source image checks and physical-iPhone Dropbox validation are pending. The reported provider hangs or unexpected terminations have not been established as resolved.
 
 ## Requirements
 

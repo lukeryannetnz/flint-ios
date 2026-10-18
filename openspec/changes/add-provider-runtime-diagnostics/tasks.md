@@ -35,11 +35,11 @@
 
 ## 5. Lazy image loading and authoring
 
-- [ ] 5.1 Add coordinated asynchronous image loading and Image I/O downsampling with 2048/4096-pixel limits, one active decode, and a 32 MiB decoded cache; verify large-image, decode failure, cache eviction, deduplication, and memory-warning tests.
-- [ ] 5.2 Replace attachment construction/layout source reads with prepared-image state and stable placeholders; verify note text appears before delayed images, captions and stored markdown are unchanged, and ordinary relayout does not reread the source.
-- [ ] 5.3 Replace viewer body/create/update filesystem work with generation-aware prepared images; verify dismissal during blocked loading is immediate and late completion cannot reopen the viewer.
-- [ ] 5.4 Move Files/photo staging copies, image imports, and camera encoding off the main actor while retaining access leases and managed-asset ordering; verify source failure/cancellation, stale document completion, and referenced-asset preservation tests through real callback paths.
-- [ ] 5.5 Replace debug accessibility checks that synchronously reread image files with actual prepared-load state; verify existing image UI tests still assert successful loading, visible bounds, insertion position, portability, save/reopen, and failed-save retry.
+- [x] 5.1 Add coordinated asynchronous image loading and Image I/O downsampling with 2048/4096-pixel limits, one active decode, and a 32 MiB decoded cache; verify large-image, decode failure, cache eviction, deduplication, and memory-warning tests.
+- [x] 5.2 Replace attachment construction/layout source reads with prepared-image state and stable placeholders; verify note text appears before delayed images, captions and stored markdown are unchanged, and ordinary relayout does not reread the source.
+- [x] 5.3 Replace viewer body/create/update filesystem work with generation-aware prepared images; verify dismissal during blocked loading is immediate and late completion cannot reopen the viewer.
+- [x] 5.4 Move Files/photo staging copies, image imports, and camera encoding off the main actor while retaining access leases and managed-asset ordering; verify source failure/cancellation, stale document completion, and referenced-asset preservation tests through real callback paths.
+- [x] 5.5 Replace debug accessibility checks that synchronously reread image files with actual prepared-load state; verify existing image UI tests still assert successful loading, visible bounds, insertion position, portability, save/reopen, and failed-save retry.
 - [ ] 5.6 Document loading/retry and image-memory behavior and source-adapter changes; verify physical-device Files/photo/camera permission, cancellation, insertion, and save/reopen outcomes required by the existing testing workflow are recorded.
 
 ## 6. Diagnostic export and recovery usability
@@ -88,3 +88,24 @@
 - Third full run: 111 passed, 1 failed. The recovery dialog intermittently disappeared while unsaved text remained. Focused UI runs confirmed that sheet-dismissal sequencing alone was insufficient; recovery choices now render directly from model state in the root presentation without modal-dismissal bindings. A subsequent focused run reached deletion and exposed SwiftUI List's automatic row-button behavior triggering Restore together with Delete. Recovery row buttons now use independent borderless actions. The original focused flow passed with explicit deletion and unchanged newer selection in `/tmp/flint-phase4-recovery-fixed.log`; the final full run includes these fixes. Temporary `[DEBUG-phase4]` probes were removed.
 - Strict OpenSpec validation and whitespace checks passed. The existing runtime-diagnostics delta still reports an archive reconciliation advisory; this change is not being archived.
 - Physical-iPhone Dropbox fixtures, Instruments traces (including accepted large-note formatting costs), and device acceptance remain pending. Lazy/prepared image loading and full diagnostic preview/clear-history remain later phases. The overall change remains awaiting device validation.
+
+
+## Phase 5 validation — 2026-10-18
+
+- Tasks 5.1–5.5 complete (21/34 overall). Images use coordinated background reads, one decode worker, 2048/4096-pixel limits, and a 32 MiB reusable cache. Visible attachments and the viewer use prepared pixels. Files imports, Photos staging, and camera encoding avoid UI-thread copies or encoding. See `docs/image-loading.md`.
+- Full required iPhone 17 / iOS 26.5 simulator suite: **124 passed, 0 failed, 0 skipped**. Log: `/tmp/flint-phase5-final-simulator.log`; result: `/tmp/flint-derived-data/Logs/Test/Test-Flint-2026.10.18_21-12-12-+1300.xcresult`.
+- Full signed physical iPhone 17 / iOS 27.0.1 (24A446) suite: **124 passed, 0 failed, 0 skipped**. Log: `/tmp/flint-phase5-final-phone.log`; result: `/tmp/flint-phase5-device/Logs/Test/Test-Flint-2026.10.18_21-12-14-+1300.xcresult`. The normal app was installed and relaunched successfully.
+- Build identity: version 1.0/build 1, phase 5 commit `e1b3ec8`, before integration with base `11fbc30`. New tests cover image sizes, version changes, deduplication, independent cancellation, memory warnings, cache limits, invalid images, vault escapes, attachment replacement, layout without source reads, photo-file lifetime, Photos foreground deadlines, and a blocked viewer read.
+- Device tests exposed equivalent `/private/var/` and `/var/` paths. A focused regression reproduced truncated discovery paths twice. A second assertion reproduced the creation-to-discovery identity mismatch. File workers now derive relative components from resolved folder identities and return consistent note URLs. Image preparation builds candidate addresses without filesystem standardization. The focused regressions and both final full suites pass. See `docs/image-loading-validation.md` for earlier failures and their fixes.
+- Strict main-spec/change validation and whitespace checks pass. Existing archive reconciliation advisories remain; this change is not archived.
+- Task 5.6 remains pending. Its documentation is complete, but automated source substitutes do not validate real Files selection, Photos selection, camera capture, or permission/cancellation behavior. Those real-source outcomes must be recorded before marking the task complete. The broader Dropbox/Instruments and transient-memory acceptance also remains pending.
+
+### Latest phase 5 integration checks
+
+Phase 5 commit `e1b3ec8` was integrated with provider-review base `11fbc30`. The loader now resolves the current provider folder before claiming the individual image. A new regression test checks both claims and stable logical image references.
+
+- Full simulator suite: **147 passed, 1 failed, 0 skipped**. Log: `/tmp/flint-phase5-pr-tests.log`; result: `/tmp/flint-derived-data/Logs/Test/Test-Flint-2026.10.18_21-20-53-+1300.xcresult`.
+- Full signed phone suite: **146 passed, 2 failed, 0 skipped**. Log: `/tmp/flint-phase5-pr-phone.log`; result: `/tmp/flint-phase5-device/Logs/Test/Test-Flint-2026.10.18_21-22-14-+1300.xcresult`.
+- Both runs fail `RuntimeDiagnosticsTests.testTimedOutTerminalWritesNeverAuthorizeRelaunch`: the final assertion expects automatic restoration to be denied after an abandoned marker, while the current implementation permits it. This test and implementation are unchanged from the latest base. The intended abandoned-marker policy needs reconciliation before merge.
+- The phone also fails `testRetainEditsAllowsNavigationAndListsOriginalDestination` while waiting for `After Recovery.md` after retaining edits. The simulator passes this flow. The cause is unresolved; this is not treated as a passing retry.
+- All prepared-image tests pass on both devices. Strict OpenSpec validation passes. The PR remains a draft while these complete-suite failures and real-source acceptance remain unresolved.

@@ -72,27 +72,27 @@ Note creation SHALL open only the note it created. Refreshing file details after
 - AND unavailable content does not block the browser
 - AND previous editor text is never saved into the new vault
 
-#### Scenario: Create a note without delayed selection changes
+#### Scenario: Create a note without a later selection change
 
 - WHEN Flint creates a note in a vault with existing notes
 - THEN the created note is selected before creation returns
 - AND refreshing the list does not schedule another note to open later
 
-#### Scenario: Refresh metadata after saving
+#### Scenario: Refresh file details after saving
 
 - GIVEN the selected note remains in the vault
 - WHEN Flint saves edits and refreshes the note list
 - THEN Flint updates the selected note metadata without re-reading its content
 - AND the editor retains the saved text
 
-#### Scenario: First note after reload
+#### Scenario: Load the first note after a refresh
 
 - GIVEN Flint has reloaded notes for the active vault
 - AND no existing selected note can be matched in the refreshed list
 - WHEN at least one note exists
 - THEN Flint opens the first note in the sorted note list
 
-#### Scenario: No notes in vault
+#### Scenario: The vault has no notes
 
 - GIVEN Flint has reloaded notes for the active vault
 - WHEN no markdown notes exist
@@ -425,3 +425,16 @@ A late completion SHALL not reset a newer pending selection.
 - THEN the browser returns selection to the retained note
 - AND selecting the requested row again starts a fresh read without selecting another row first
 - AND publishing pending selection does not dispatch a duplicate read
+
+### Requirement: Preserve note paths across equivalent folder URLs
+
+On a device, iOS may use different file addresses (URLs) for the same folder. For example, a symbolic link is another path to an existing folder. Flint SHALL resolve those addresses to the same actual folder before deriving note paths. It SHALL preserve each note's path relative to the vault and reject files outside that vault.
+
+Creation and discovery SHALL return the same logical address for a note, using the selected vault address and the note's relative path. Workers SHALL resolve that address under the folder supplied by the provider for each operation. This allows Flint to select a newly created note even if the provider moves its folder.
+
+#### Scenario: Discovery returns resolved file URLs
+
+- GIVEN the selected vault URL and discovered file URLs use different paths for the same folder
+- WHEN Flint discovers `Projects/iOS/Seed.md` and `Daily.md`
+- THEN their vault-relative paths are `Projects/iOS/Seed.md` and `Daily.md`
+- AND the browser shows `Projects` as the nested folder and `Daily.md` at the vault root

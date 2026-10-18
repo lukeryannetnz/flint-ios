@@ -65,3 +65,19 @@ The model SHALL publish which note is being requested separately from the note t
 - THEN the browser selects the note whose text is still displayed
 - AND choosing the failed row again starts a new read without first choosing a different row
 - AND publishing the requested selection does not start a duplicate read
+
+
+## ADDED Requirements
+
+### Requirement: Preserve note paths across equivalent folder URLs
+
+On a device, iOS may use different file addresses (URLs) for the same folder. For example, a symbolic link is another path to an existing folder. Flint SHALL resolve those addresses to the same actual folder before deriving note paths. It SHALL preserve each note's path relative to the vault and reject files outside that vault.
+
+Creation and discovery SHALL return the same logical address for a note, using the selected vault address and the note's relative path. Workers SHALL resolve that address under the folder supplied by the provider for each operation. This allows Flint to select a newly created note even if the provider moves its folder.
+
+#### Scenario: Discovery returns resolved file URLs
+
+- GIVEN the selected vault URL and discovered file URLs use different paths for the same folder
+- WHEN Flint discovers `Projects/iOS/Seed.md` and `Daily.md`
+- THEN their vault-relative paths are `Projects/iOS/Seed.md` and `Daily.md`
+- AND the browser shows `Projects` as the nested folder and `Daily.md` at the vault root

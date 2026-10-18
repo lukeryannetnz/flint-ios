@@ -19,6 +19,25 @@ final class VaultFileServiceTests: XCTestCase {
         }
     }
 
+    func testDiscoveryPreservesRelativePathsWhenEnumerationNormalizesVaultURL() async throws {
+        let root = temporaryDirectoryURL!
+        let actual = root.appendingPathComponent("Actual", isDirectory: true)
+        let nested = actual.appendingPathComponent("Projects/iOS", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try "Nested".write(to: nested.appendingPathComponent("Seed.md"), atomically: true, encoding: .utf8)
+        try "Root".write(to: actual.appendingPathComponent("Daily.md"), atomically: true, encoding: .utf8)
+        let alias = URL(fileURLWithPath: actual.path + "/../Actual", isDirectory: true)
+        let executor = ProviderExecutor(coordinatorFactory: { DiscoveryAliasCoordinator() })
+        let service = VaultFileService(executor: executor)
+        let notes = try await service.listMarkdownNotes(in: alias, request: ProviderRequest(vaultURL: alias))
+        XCTAssertEqual(Set(notes.map(\.relativePath)), ["Projects/iOS/Seed.md", "Daily.md"])
+        XCTAssertEqual(notes.first { $0.title == "Seed" }?.folderPath, "Projects/iOS")
+        XCTAssertEqual(notes.first { $0.title == "Daily" }?.folderPath, "")
+        let created = try await service.createNote(named: "Created", in: alias, request: ProviderRequest(vaultURL: alias))
+        let refreshed = try await service.listMarkdownNotes(in: alias, request: ProviderRequest(vaultURL: alias))
+        XCTAssertTrue(refreshed.contains { $0.url == created }, "Creation and discovery must identify the same note")
+    }
+
     func testDiscoveryBatchesFilterFilesAndDoNotReadInvalidContent() async throws {
         let root = temporaryDirectoryURL!
         for index in 0..<140 {
@@ -137,7 +156,8 @@ final class VaultFileServiceTests: XCTestCase {
         if camera { inserted = await model.importCameraImage(image) }
         else { inserted = await model.importImage(from: source, preferredFilename: "Fixture") }
         let result = try XCTUnwrap(inserted)
-        XCTAssertEqual(result.assetURL.deletingLastPathComponent(), vault.appendingPathComponent("Editable Assets", isDirectory: true))
+        XCTAssertEqual(result.assetURL.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL,
+            vault.appendingPathComponent("Editable Assets", isDirectory: true).resolvingSymlinksInPath().standardizedFileURL)
         if camera {
             XCTAssertEqual(result.assetURL.pathExtension, "jpg")
             XCTAssertEqual(try Data(contentsOf: result.assetURL).prefix(2), Data([0xff, 0xd8]))
@@ -156,7 +176,8 @@ final class VaultFileServiceTests: XCTestCase {
         attributed.enumerateAttribute(.flintImageAssetURL, in: NSRange(location: 0, length: attributed.length)) { value, _, _ in
             if let url = value as? URL { imageURLs.append(url) }
         }
-        XCTAssertTrue(imageURLs.contains(result.assetURL))
+        XCTAssertTrue(imageURLs.map { $0.resolvingSymlinksInPath().standardizedFileURL }
+            .contains(result.assetURL.resolvingSymlinksInPath().standardizedFileURL))
         XCTAssertNotNil(UIImage(contentsOfFile: result.assetURL.path))
         XCTAssertFalse(reopened.noteText.contains("file://"))
     }
@@ -197,7 +218,7 @@ final class VaultFileServiceTests: XCTestCase {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
         _ = try await service.createNote(named: "Daily", in: vault, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         let nested = try await service.createNote(named: "Daily", in: folder, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
-        XCTAssertEqual(nested, folder.appendingPathComponent("Daily.md"))
+        XCTAssertEqual(nested.resolvingSymlinksInPath().standardizedFileURL, folder.appendingPathComponent("Daily.md").resolvingSymlinksInPath().standardizedFileURL)
         let awaitedResult3 = try await service.listMarkdownNotes(in: vault, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
         XCTAssertEqual(Set(awaitedResult3.map(\.relativePath)), ["Daily.md", "Projects/Daily.md"])
     }
@@ -318,7 +339,7 @@ final class VaultFileServiceTests: XCTestCase {
             vaultURL: vaultURL.appendingPathComponent("Notes", isDirectory: true)
         )
 
-        XCTAssertEqual(rootResolved, vaultURL.appendingPathComponent("Attachments/diagram.heic"))
+        XCTAssertEqual(rootResolved, vaultURL.resolvingSymlinksInPath().standardizedFileURL.appendingPathComponent("Attachments/diagram.heic"))
         XCTAssertNil(relativeResolved)
     }
 
@@ -652,5 +673,11 @@ private final class RelocatingDiscoveryCoordinator: ProviderCoordinating {
         defer { accessorActive = false }
         accessor(url.path == logicalRoot.path ? root : url)
     }
+    func cancel() {}
+}
+
+private final class DiscoveryAliasCoordinator: ProviderCoordinating {
+    func read(at url: URL, accessor: (URL) -> Void) throws { accessor(url) }
+    func write(at url: URL, accessor: (URL) -> Void) throws { accessor(url) }
     func cancel() {}
 }

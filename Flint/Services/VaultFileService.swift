@@ -313,7 +313,7 @@ final class VaultFileService: VaultFileServing {
         return try context.coordinated(step, at: currentItem, accessor)
     }
 
-    private static func resolvedItem(_ url: URL, in vaultURL: URL, currentRoot: URL) throws -> URL {
+    static func resolvedItem(_ url: URL, in vaultURL: URL, currentRoot: URL) throws -> URL {
         let rootPath = vaultURL.standardizedFileURL.path
         let itemPath = url.standardizedFileURL.path
         if itemPath == rootPath { return currentRoot }
@@ -625,6 +625,20 @@ final class VaultFileService: VaultFileServing {
         }
 
         let standardizedCandidate = candidateURL.standardizedFileURL
+        return validatedImageURL(standardizedCandidate, vaultURL: standardizedVaultURL)
+    }
+
+    /// Construct an unverified address only. URL standardization can consult the filesystem on iOS.
+    /// The image worker resolves aliases and enforces vault containment before reading.
+    static func imageCandidateURL(markdownPath: String, noteURL: URL, vaultURL: URL) -> URL? {
+        let path = cleanedMarkdownPath(markdownPath.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard !path.isEmpty, URL(string: path)?.scheme == nil else { return nil }
+        return path.hasPrefix("/")
+            ? vaultURL.appendingPathComponent(String(path.dropFirst()), isDirectory: false)
+            : noteURL.deletingLastPathComponent().appendingPathComponent(path, isDirectory: false)
+    }
+
+    private static func validatedImageURL(_ standardizedCandidate: URL, vaultURL standardizedVaultURL: URL) -> URL? {
         let resolvedCandidateParent = standardizedCandidate
             .deletingLastPathComponent()
             .resolvingSymlinksInPath()

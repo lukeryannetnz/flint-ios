@@ -3,6 +3,16 @@ import UIKit
 
 struct RootView: View {
     @ObservedObject var model: AppModel
+    #if DEBUG
+    @State private var persistenceSnapshot = "{}"
+    @State private var sourceRevision = 0
+    private struct SnapshotKey: Equatable {
+        let noteURL: URL?
+        let text: String
+        let unsaved: Bool
+        let sourceRevision: Int
+    }
+    #endif
 
     var body: some View {
         Group {
@@ -59,13 +69,25 @@ struct RootView: View {
             #if DEBUG
             if ImageWorkflowTestSupport.active {
                 VStack {
-                    Text(ImageWorkflowTestSupport.snapshot(model: model))
+                    Text(persistenceSnapshot)
                         .font(.system(size: 1))
                         .accessibilityIdentifier("test.persistence")
+                        .task(id: SnapshotKey(noteURL: model.selectedNote?.url, text: model.noteText,
+                            unsaved: model.hasUnsavedChanges, sourceRevision: sourceRevision)) {
+                            // Coalesce typing updates. Accessibility only reads the last completed snapshot.
+                            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+                            let value = await ImageWorkflowTestSupport.snapshot(model: model)
+                            guard !Task.isCancelled else { return }
+                            persistenceSnapshot = value
+                        }
                     Button("Remove import source") {
                         if let source = ImageWorkflowTestSupport.sourceURL {
-                            do { try FileManager.default.removeItem(at: source); model.objectWillChange.send() }
-                            catch { model.alertMessage = error.localizedDescription }
+                            Task {
+                                do {
+                                    try await Task.detached { try FileManager.default.removeItem(at: source) }.value
+                                    sourceRevision += 1
+                                } catch { model.alertMessage = error.localizedDescription }
+                            }
                         }
                     }
                     .accessibilityIdentifier("test.remove-source")

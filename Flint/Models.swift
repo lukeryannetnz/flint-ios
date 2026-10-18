@@ -28,7 +28,8 @@ struct InsertedNoteImage: Equatable {
 }
 
 struct NoteImageViewerItem: Identifiable, Equatable {
-    let assetURL: URL
+    let reference: NoteImageReference
+    var assetURL: URL { reference.assetURL }
     let altText: String
 
     var id: String { assetURL.path + "::" + altText }
