@@ -88,7 +88,8 @@ enum FlintRichTextCodec {
                 result.append(attributedImageBlock(
                     markdownSource: imageReference.markdownSource,
                     altText: imageReference.altText,
-                    assetURL: resolvedImageURL(for: imageReference.sourcePath, noteURL: noteURL, vaultURL: vaultURL)
+                    assetURL: resolvedImageURL(for: imageReference.sourcePath, noteURL: noteURL, vaultURL: vaultURL),
+                    vaultURL: vaultURL
                 ))
             } else {
                 let style: FlintBlockStyle
@@ -813,11 +814,11 @@ enum FlintRichTextCodec {
 
     private static func resolvedImageURL(for sourcePath: String, noteURL: URL?, vaultURL: URL?) -> URL? {
         guard let noteURL, let vaultURL else { return nil }
-        return VaultFileService.resolveImageURL(markdownPath: sourcePath, noteURL: noteURL, vaultURL: vaultURL)
+        return VaultFileService.imageCandidateURL(markdownPath: sourcePath, noteURL: noteURL, vaultURL: vaultURL)
     }
 
-    private static func attributedImageBlock(markdownSource: String, altText: String, assetURL: URL?) -> NSAttributedString {
-        let attachment = FlintMarkdownImageAttachment(markdownSource: markdownSource, assetURL: assetURL, altText: altText)
+    private static func attributedImageBlock(markdownSource: String, altText: String, assetURL: URL?, vaultURL: URL?) -> NSAttributedString {
+        let attachment = FlintMarkdownImageAttachment(markdownSource: markdownSource, assetURL: assetURL, altText: altText, vaultURL: vaultURL)
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
         paragraph.paragraphSpacing = altText.isEmpty ? 18 : 8

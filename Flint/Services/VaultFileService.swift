@@ -119,6 +119,7 @@ final class VaultFileService: VaultFileServing {
                             options: [.skipsHiddenFiles], errorHandler: { _, error in cursor.error = error; return false })
                         guard cursor.enumerator != nil else { throw VaultError.inaccessibleVault }
                     }
+                    let rootComponents = root.resolvingSymlinksInPath().standardizedFileURL.pathComponents
                     var notes: [NoteItem] = []
                     for _ in 0..<64 {
                         try context.checkCancellation()
@@ -130,9 +131,15 @@ final class VaultFileService: VaultFileServing {
                             }
                             guard let regular = values.isRegularFile else { throw VaultError.inaccessibleVault }
                             guard regular, values.isSymbolicLink != true else { continue }
-                            let path = String(url.path.dropFirst(root.path.count + 1))
+                            let resolvedURL = url.resolvingSymlinksInPath().standardizedFileURL
+                            let components = resolvedURL.pathComponents
+                            guard components.count > rootComponents.count,
+                                  components.prefix(rootComponents.count).elementsEqual(rootComponents) else {
+                                throw VaultError.inaccessibleVault
+                            }
+                            let path = components.dropFirst(rootComponents.count).joined(separator: "/")
                             let folder = path.split(separator: "/").dropLast().joined(separator: "/")
-                            notes.append(NoteItem(url: url, title: url.deletingPathExtension().lastPathComponent,
+                            notes.append(NoteItem(url: resolvedURL, title: resolvedURL.deletingPathExtension().lastPathComponent,
                                 relativePath: path, folderPath: folder, folderName: folder.split(separator: "/").last.map(String.init) ?? "Vault",
                                 previewMarkdown: "", createdAt: values.creationDate ?? .distantPast,
                                 lastModifiedAt: values.contentModificationDate ?? .distantPast))
@@ -264,7 +271,7 @@ final class VaultFileService: VaultFileServing {
                 }
 
                 try "".write(to: noteURL, atomically: true, encoding: .utf8)
-                return noteURL
+                return noteURL.resolvingSymlinksInPath().standardizedFileURL
             }
         }
     }
@@ -563,6 +570,20 @@ final class VaultFileService: VaultFileServing {
         }
 
         let standardizedCandidate = candidateURL.standardizedFileURL
+        return validatedImageURL(standardizedCandidate, vaultURL: standardizedVaultURL)
+    }
+
+    /// Construct an unverified address only. URL standardization can consult the filesystem on iOS.
+    /// The image worker resolves aliases and enforces vault containment before reading.
+    static func imageCandidateURL(markdownPath: String, noteURL: URL, vaultURL: URL) -> URL? {
+        let path = cleanedMarkdownPath(markdownPath.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard !path.isEmpty, URL(string: path)?.scheme == nil else { return nil }
+        return path.hasPrefix("/")
+            ? vaultURL.appendingPathComponent(String(path.dropFirst()), isDirectory: false)
+            : noteURL.deletingLastPathComponent().appendingPathComponent(path, isDirectory: false)
+    }
+
+    private static func validatedImageURL(_ standardizedCandidate: URL, vaultURL standardizedVaultURL: URL) -> URL? {
         let resolvedCandidateParent = standardizedCandidate
             .deletingLastPathComponent()
             .resolvingSymlinksInPath()

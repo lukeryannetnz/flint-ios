@@ -22,6 +22,8 @@
 
 
 /* Begin PBXBuildFile section */
+        E50000000000000000000001 = {isa = PBXBuildFile; fileRef = E50000000000000000000002; };
+        E50000000000000000000003 = {isa = PBXBuildFile; fileRef = E50000000000000000000004; };
         E40000000000000000000001 = {isa = PBXBuildFile; fileRef = E40000000000000000000002; };
         D1000000000000000000000A = {isa = PBXBuildFile; fileRef = D1000000000000000000010A; };
         D10000000000000000000009 = {isa = PBXBuildFile; fileRef = D10000000000000000000109; };
@@ -62,6 +64,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+        E50000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreparedImageLoader.swift; sourceTree = "<group>"; };
+        E50000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreparedImageLoaderTests.swift; sourceTree = "<group>"; };
         E40000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentRecoveryStore.swift; sourceTree = "<group>"; };
         D1000000000000000000010A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderExecutorTests.swift; sourceTree = "<group>"; };
         D10000000000000000000109 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticShareStore.swift; sourceTree = "<group>"; };
@@ -145,6 +149,7 @@
 		A10000010000000000000072 /* FlintTests */ = {
 			isa = PBXGroup;
 			children = (
+                E50000000000000000000004,
                 D10000000000000000000103,
                 D1000000000000000000010A,
                 D10000000000000000000107,
@@ -167,6 +172,7 @@
 		A10000010000000000000074 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+                E50000000000000000000002,
                 D10000000000000000000102,
                 D10000000000000000000101,
                 D10000000000000000000109, E40000000000000000000002,
@@ -331,6 +337,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                E50000000000000000000001,
                 D10000000000000000000002,
                 D10000000000000000000001,
                 D10000000000000000000009, E40000000000000000000001,
@@ -358,6 +365,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                E50000000000000000000003,
                 D10000000000000000000003,
                 D1000000000000000000000A,
                 D10000000000000000000007,

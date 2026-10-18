@@ -80,6 +80,7 @@ struct ProviderRequest {
     let vaultURL: URL?
     let attempt: ProviderAttempt
     var priority: Priority = .explicit
+    var sourceLifetime: AnyObject? = nil
     init(vaultURL: URL?, attempt: ProviderAttempt = ProviderAttempt(), priority: Priority = .explicit) {
         self.vaultURL = vaultURL; self.attempt = attempt; self.priority = priority
     }

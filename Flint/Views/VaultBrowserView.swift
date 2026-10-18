@@ -204,11 +204,13 @@ struct VaultBrowserView: View {
                     get: { model.noteText },
                     set: { model.updateNoteText($0) }
                 ),
-                onImportImageFile: { url, preferredFilename in
-                    await model.importImage(from: url, preferredFilename: preferredFilename)
+                onImportImageFile: { url, preferredFilename, lifetime in
+                    guard model.selectedNote?.url == selectedNote.url else { return nil }
+                    return await model.importImage(from: url, preferredFilename: preferredFilename, sourceLifetime: lifetime)
                 },
                 onImportCameraImage: { image in
-                    await model.importCameraImage(image)
+                    guard model.selectedNote?.url == selectedNote.url else { return nil }
+                    return await model.importCameraImage(image)
                 },
                 hasPendingImageImport: model.hasPendingImageImport,
                 onRecoverImageImport: { model.recoverImageImport(for: selectedNote.url) },
@@ -218,6 +220,7 @@ struct VaultBrowserView: View {
                     }
                 }
             )
+            .id(selectedNote.url)
         } else {
             ContentUnavailableView(
                 "Select a Note",
@@ -424,7 +427,7 @@ private struct NoteDocumentView: View {
     let note: NoteItem
     let vaultURL: URL?
     @Binding var text: String
-    let onImportImageFile: (URL, String?) async -> InsertedNoteImage?
+    let onImportImageFile: (URL, String?, StagedPhotoFile?) async -> InsertedNoteImage?
     let onImportCameraImage: (UIImage) async -> InsertedNoteImage?
     let hasPendingImageImport: Bool
     let onRecoverImageImport: () -> InsertedNoteImage?
@@ -440,8 +443,11 @@ private struct NoteDocumentView: View {
     @State private var isShowingFileImporter = false
     @State private var pendingLink = "https://"
     @State private var imageViewerItem: NoteImageViewerItem?
+    @State private var importGeneration = UUID()
+    @State private var imageImportError: String?
 
     var body: some View {
+        let sourceGeneration = importGeneration
         ZStack {
             Color(uiColor: .systemGroupedBackground)
                 .ignoresSafeArea()
@@ -537,7 +543,14 @@ private struct NoteDocumentView: View {
             Button("Photo Library") {
                 #if DEBUG
                 if ImageWorkflowTestSupport.active, let url = ImageWorkflowTestSupport.sourceURL {
-                    acceptPhoto(ImportedImageSelection(url: url, preferredFilename: "Fixture"))
+                    let generation = importGeneration
+                    Task {
+                        do {
+                            let staged = try await Task.detached { try StagedPhotoFile.copyCallbackFile(url) }.value
+                            guard generation == importGeneration else { return }
+                            acceptPhoto(ImportedImageSelection(url: staged.url, preferredFilename: "Fixture", stagedFile: staged))
+                        } catch { imageImportError = "The selected photo could not be copied. Please try again." }
+                    }
                     return
                 }
                 #endif
@@ -565,13 +578,19 @@ private struct NoteDocumentView: View {
         }
         .sheet(isPresented: $isShowingPhotoPicker) {
             PhotoLibraryImagePicker { selected in
+                guard sourceGeneration == importGeneration else { return }
                 acceptPhoto(selected)
+            } onFailure: {
+                guard sourceGeneration == importGeneration else { return }
+                isShowingPhotoPicker = false
+                imageImportError = "The selected photo could not be copied. Please try again."
             } onCancel: {
                 isShowingPhotoPicker = false
             }
         }
         .sheet(isPresented: $isShowingCameraPicker) {
             CameraImagePicker { image in
+                guard sourceGeneration == importGeneration else { return }
                 acceptCamera(image)
             } onCancel: {
                 isShowingCameraPicker = false
@@ -582,12 +601,21 @@ private struct NoteDocumentView: View {
             allowedContentTypes: [.image],
             allowsMultipleSelection: false
         ) { result in
+            guard sourceGeneration == importGeneration else { return }
             acceptFiles(result)
         }
         .sheet(item: $imageViewerItem) { item in
             NoteImageViewer(item: item)
         }
+        .alert("Image import failed", isPresented: Binding(get: { imageImportError != nil }, set: { if !$0 { imageImportError = nil } })) {
+            Button("OK") { imageImportError = nil }
+        } message: { Text(imageImportError ?? "") }
+        .onDisappear { importGeneration = UUID() }
         .onChange(of: note.url) { _, _ in
+            importGeneration = UUID()
+            isShowingPhotoPicker = false
+            isShowingCameraPicker = false
+            isShowingFileImporter = false
             isEditing = false
             formattingState = FlintFormattingState()
             pendingCommand = nil
@@ -603,8 +631,9 @@ private struct NoteDocumentView: View {
 
     private func acceptCamera(_ image: UIImage) {
         isShowingCameraPicker = false
+        let generation = importGeneration
         Task {
-            if let inserted = await onImportCameraImage(image) {
+            if let inserted = await onImportCameraImage(image), generation == importGeneration {
                 pendingCommand = makeCommand(.insertImage(inserted))
             }
         }
@@ -612,14 +641,14 @@ private struct NoteDocumentView: View {
 
     private func acceptFiles(_ result: Result<[URL], Error>) {
         isShowingFileImporter = false
-        guard case .success(let urls) = result, let url = urls.first,
-              let selected = copyImportedFileToTemporaryLocation(url) else { return }
-        importFile(selected)
+        guard case .success(let urls) = result, let url = urls.first else { return }
+        importFile(ImportedImageSelection(url: url, preferredFilename: url.deletingPathExtension().lastPathComponent))
     }
 
     private func importFile(_ selected: ImportedImageSelection) {
+        let generation = importGeneration
         Task {
-            if let inserted = await onImportImageFile(selected.url, selected.preferredFilename) {
+            if let inserted = await onImportImageFile(selected.url, selected.preferredFilename, selected.stagedFile), generation == importGeneration {
                 pendingCommand = makeCommand(.insertImage(inserted))
             }
         }
@@ -641,45 +670,7 @@ private struct NoteDocumentView: View {
         return RichTextEditorCommand(id: nextCommandID, action: action)
     }
 
-    private func copyImportedFileToTemporaryLocation(_ url: URL) -> ImportedImageSelection? {
-        let importAction = DebugLog.shared.begin(.imageImport, file: url)
-        defer { importAction.finish(.success) }
-        let access = DebugLog.shared.begin(.securityScope, file: url, parent: importAction.id)
-        let didStartAccessing = url.startAccessingSecurityScopedResource()
-        access.finish(.success, count: didStartAccessing ? 1 : 0)
-        defer {
-            if didStartAccessing {
-                url.stopAccessingSecurityScopedResource()
-            }
-        }
 
-        let destinationURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension(url.pathExtension)
-
-        do {
-            if FileManager.default.fileExists(atPath: destinationURL.path) {
-                try FileManager.default.removeItem(at: destinationURL)
-            }
-            try DebugLog.shared.measure(.fileRead, file: url) {
-                try FileManager.default.copyItem(at: url, to: destinationURL)
-            }
-            return ImportedImageSelection(
-                url: destinationURL,
-                preferredFilename: url.deletingPathExtension().lastPathComponent
-            )
-        } catch {
-            importAction.finish(.failure, error: error)
-            guard !didStartAccessing else {
-                return nil
-            }
-
-            return ImportedImageSelection(
-                url: url,
-                preferredFilename: url.deletingPathExtension().lastPathComponent
-            )
-        }
-    }
 }
 
 private struct RichTextSurfaceDiagnostics: Equatable {
@@ -1071,6 +1062,10 @@ private struct RichTextNoteEditor: UIViewRepresentable {
         return textView
     }
 
+    static func dismantleUIView(_ uiView: FlintRichTextView, coordinator: Coordinator) {
+        coordinator.cancelImageLoads()
+    }
+
     func updateUIView(_ textView: FlintRichTextView, context: Context) {
         context.coordinator.onSave = onSave
         context.coordinator.noteID = noteID
@@ -1124,6 +1119,39 @@ private struct RichTextNoteEditor: UIViewRepresentable {
         var lastLoadedAvailableTextWidth: CGFloat = 0
         var lastOverflowCorrectionWidth: CGFloat = -1
         var isReconcilingLayoutMetrics = false
+        var visibleAttachments: [ObjectIdentifier: FlintMarkdownImageAttachment] = [:]
+
+        deinit { visibleAttachments.values.forEach { $0.cancelLoading() } }
+
+        func cancelImageLoads() {
+            visibleAttachments.values.forEach { $0.cancelLoading() }
+            visibleAttachments = [:]
+        }
+
+        func prepareVisibleImages() {
+            guard let textView, textView.textStorage.length > 0 else { cancelImageLoads(); return }
+            var visible: [ObjectIdentifier: FlintMarkdownImageAttachment] = [:]
+            textView.textStorage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: textView.textStorage.length)) { value, range, _ in
+                guard let attachment = value as? FlintMarkdownImageAttachment else { return }
+                let glyphs = textView.layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                var rect = textView.layoutManager.boundingRect(forGlyphRange: glyphs, in: textView.textContainer)
+                rect.origin.x += textView.textContainerInset.left; rect.origin.y += textView.textContainerInset.top
+                guard rect.intersects(textView.bounds) else { return }
+                visible[ObjectIdentifier(attachment)] = attachment
+                attachment.load { [weak textView, weak attachment] in
+                    guard let textView, let attachment else { return }
+                    // Locate this exact attachment again: edits may have moved it or replaced the document.
+                    textView.textStorage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: textView.textStorage.length)) { value, currentRange, _ in
+                        guard let current = value as? FlintMarkdownImageAttachment, current === attachment else { return }
+                        textView.layoutManager.invalidateLayout(forCharacterRange: currentRange, actualCharacterRange: nil)
+                        textView.layoutManager.invalidateDisplay(forCharacterRange: currentRange)
+                    }
+                    textView.setNeedsLayout()
+                }
+            }
+            for (id, attachment) in visibleAttachments where visible[id] == nil { attachment.releaseOffscreenPixels() }
+            visibleAttachments = visible
+        }
 
         init(
             vaultURL: URL?,
@@ -1167,10 +1195,12 @@ private struct RichTextNoteEditor: UIViewRepresentable {
             textView.typingAttributes = FlintRichTextCodec.defaultTypingAttributes(for: .body)
             textView.linkTextAttributes = [.foregroundColor: UIColor.systemBlue]
             textView.placeholderText = "Start writing. Tap anywhere to place the cursor."
+            textView.onImageRetry = { [weak self] in self?.prepareVisibleImages() }
             textView.onLayoutMetricsChange = { [weak self] richTextView in
                 DispatchQueue.main.async { [weak self, weak richTextView] in
                     guard let self, let richTextView else { return }
                     self.reconcileLayoutMetrics(in: richTextView)
+                    self.prepareVisibleImages()
                 }
             }
         }
@@ -1183,6 +1213,7 @@ private struct RichTextNoteEditor: UIViewRepresentable {
                 return
             }
 
+            cancelImageLoads()
             isApplyingInternalChange = true
             if lastLoadedNoteID != noteID {
                 lastOverflowCorrectionWidth = -1
@@ -1210,6 +1241,7 @@ private struct RichTextNoteEditor: UIViewRepresentable {
                 typingAttributes: textView.typingAttributes
             )
             isApplyingInternalChange = false
+            prepareVisibleImages()
         }
 
         func beginEditing(at location: CGPoint) {
@@ -1314,6 +1346,7 @@ private struct RichTextNoteEditor: UIViewRepresentable {
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             guard let textView = scrollView as? FlintRichTextView else { return }
             textView.stabilizeScrollGeometry()
+            prepareVisibleImages()
         }
 
         func textView(
@@ -1465,6 +1498,7 @@ private struct RichTextNoteEditor: UIViewRepresentable {
             let cursorLocation = min(selectedRange.location + insertion.length, textView.attributedText.length)
             textView.selectedRange = NSRange(location: cursorLocation, length: 0)
             lastKnownSelectedRange = textView.selectedRange
+            prepareVisibleImages()
         }
 
         private func mutateSelection(in textView: FlintRichTextView, mutation: (NSMutableAttributedString, NSRange) -> Void) {
@@ -1597,6 +1631,7 @@ private struct RichTextNoteEditor: UIViewRepresentable {
 private final class FlintRichTextView: UITextView {
     var onReadTap: ((CGPoint) -> Void)?
     var onReadImageTap: ((NoteImageViewerItem) -> Void)?
+    var onImageRetry: (() -> Void)?
     var onLayoutMetricsChange: ((FlintRichTextView) -> Void)?
     var placeholderText: String = "" {
         didSet {
@@ -1623,8 +1658,11 @@ private final class FlintRichTextView: UITextView {
                 let visible = rect.intersection(bounds)
                 guard !visible.isNull, visible.width > 0, visible.height > 0 else { return }
                 let element = UIAccessibilityElement(accessibilityContainer: self)
-                let loaded = attachment.assetURL.flatMap { UIImage(contentsOfFile: $0.path) } != nil && attachment.image != nil
-                element.accessibilityIdentifier = loaded ? "note.image.loaded" : "note.image.missing"
+                switch attachment.loadState {
+                case .loaded: element.accessibilityIdentifier = "note.image.loaded"
+                case .pending: element.accessibilityIdentifier = "note.image.loading"
+                case .failed: element.accessibilityIdentifier = "note.image.missing"
+                }
                 element.accessibilityLabel = attachment.altText
                 element.accessibilityTraits = .image
                 element.accessibilityFrame = convert(visible, to: nil)
@@ -1751,8 +1789,12 @@ private final class FlintRichTextView: UITextView {
             return
         }
 
-        if let imageItem = imageViewerItem(at: location) {
-            onReadImageTap?(imageItem)
+        if let attachment = imageAttachment(at: location) {
+            if attachment.loadState == .failed {
+                attachment.retry(); onImageRetry?()
+            } else if let item = attachment.viewerItem {
+                onReadImageTap?(item)
+            }
             return
         }
 
@@ -1779,7 +1821,7 @@ private final class FlintRichTextView: UITextView {
         return textStorage.attribute(.link, at: characterIndex, effectiveRange: nil) as? URL
     }
 
-    private func imageViewerItem(at location: CGPoint) -> NoteImageViewerItem? {
+    private func imageAttachment(at location: CGPoint) -> FlintMarkdownImageAttachment? {
         guard textStorage.length > 0 else { return nil }
 
         var fraction: CGFloat = 0
@@ -1794,7 +1836,7 @@ private final class FlintRichTextView: UITextView {
             return nil
         }
 
-        return attachment.viewerItem
+        return attachment
     }
 
     private func availableTextWidth() -> CGFloat {
@@ -1809,27 +1851,47 @@ private final class FlintRichTextView: UITextView {
 private struct ImportedImageSelection {
     let url: URL
     let preferredFilename: String?
+    var stagedFile: StagedPhotoFile? = nil
 }
 
 private struct NoteImageViewer: View {
     let item: NoteImageViewerItem
     @Environment(\.dismiss) private var dismiss
+    @State private var prepared: UIImage?
+    @State private var failed = false
+    @State private var retryID = UUID()
 
     var body: some View {
         NavigationStack {
             ZStack {
                 Color.black.ignoresSafeArea()
 
-                if FileManager.default.fileExists(atPath: item.assetURL.path) {
-                    ZoomableImageView(imageURL: item.assetURL)
+                if let prepared {
+                    ZoomableImageView(image: prepared)
                         .ignoresSafeArea()
+                } else if failed {
+                    VStack {
+                        ContentUnavailableView(
+                            "Image unavailable",
+                            systemImage: "photo.slash",
+                            description: Text(item.altText.isEmpty ? "Flint could not find this image file." : item.altText)
+                        )
+                        .foregroundStyle(.white)
+                        Button("Retry") { retryID = UUID() }
+                    }
                 } else {
-                    ContentUnavailableView(
-                        "Image Missing",
-                        systemImage: "photo.slash",
-                        description: Text(item.altText.isEmpty ? "Flint could not find this image file." : item.altText)
-                    )
-                    .foregroundStyle(.white)
+                    ProgressView("Loading image…").tint(.white).foregroundStyle(.white)
+                }
+            }
+            .task(id: retryID) {
+                failed = false
+                do {
+                    let image = try await PreparedImageLoader.shared.image(for: item.reference, size: .viewer, optional: false)
+                    guard !Task.isCancelled else { return }
+                    prepared = image.image
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    failed = true
                 }
             }
             .toolbar {
@@ -1846,7 +1908,7 @@ private struct NoteImageViewer: View {
 }
 
 private struct ZoomableImageView: UIViewRepresentable {
-    let imageURL: URL
+    let image: UIImage
 
     func makeUIView(context: Context) -> UIScrollView {
         let scrollView = UIScrollView()
@@ -1858,7 +1920,7 @@ private struct ZoomableImageView: UIViewRepresentable {
         let imageView = UIImageView()
         imageView.contentMode = .scaleAspectFit
         imageView.clipsToBounds = true
-        imageView.image = loadLoggedImage()
+        imageView.image = image
         imageView.frame = scrollView.bounds
         imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         scrollView.addSubview(imageView)
@@ -1867,16 +1929,9 @@ private struct ZoomableImageView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UIScrollView, context: Context) {
-        context.coordinator.imageView?.image = loadLoggedImage()
+        context.coordinator.imageView?.image = image
         context.coordinator.imageView?.frame = uiView.bounds
         uiView.contentSize = uiView.bounds.size
-    }
-
-    private func loadLoggedImage() -> UIImage? {
-        let action = DebugLog.shared.begin(.imageRead, file: imageURL)
-        let image = UIImage(contentsOfFile: imageURL.path)
-        action.finish(image == nil ? .failure : .success)
-        return image
     }
 
     func makeCoordinator() -> Coordinator {
@@ -1894,10 +1949,11 @@ private struct ZoomableImageView: UIViewRepresentable {
 
 private struct PhotoLibraryImagePicker: UIViewControllerRepresentable {
     let onPick: (ImportedImageSelection) -> Void
+    let onFailure: () -> Void
     let onCancel: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onPick: onPick, onCancel: onCancel)
+        Coordinator(onPick: onPick, onFailure: onFailure, onCancel: onCancel)
     }
 
     func makeUIViewController(context: Context) -> PHPickerViewController {
@@ -1911,12 +1967,19 @@ private struct PhotoLibraryImagePicker: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
 
+    static func dismantleUIViewController(_ uiViewController: PHPickerViewController, coordinator: Coordinator) {
+        coordinator.selection?.cancel()
+    }
+
     final class Coordinator: NSObject, PHPickerViewControllerDelegate {
+        var selection: PhotoSelectionRequest?
         let onPick: (ImportedImageSelection) -> Void
+        let onFailure: () -> Void
         let onCancel: () -> Void
 
-        init(onPick: @escaping (ImportedImageSelection) -> Void, onCancel: @escaping () -> Void) {
+        init(onPick: @escaping (ImportedImageSelection) -> Void, onFailure: @escaping () -> Void, onCancel: @escaping () -> Void) {
             self.onPick = onPick
+            self.onFailure = onFailure
             self.onCancel = onCancel
         }
 
@@ -1928,31 +1991,24 @@ private struct PhotoLibraryImagePicker: UIViewControllerRepresentable {
 
             let provider = result.itemProvider
             let typeIdentifier = provider.registeredTypeIdentifiers.first ?? UTType.image.identifier
-            provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { sourceURL, _ in
-                guard let sourceURL else {
-                    DispatchQueue.main.async { self.onCancel() }
-                    return
-                }
-
-                let temporaryURL = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(UUID().uuidString)
-                    .appendingPathExtension(sourceURL.pathExtension)
-
-                do {
-                    try FileManager.default.createDirectory(at: temporaryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    if FileManager.default.fileExists(atPath: temporaryURL.path) {
-                        try FileManager.default.removeItem(at: temporaryURL)
+            let selection = PhotoSelectionRequest { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    switch result {
+                    case let .success(staged):
+                        self.onPick(ImportedImageSelection(url: staged.url,
+                            preferredFilename: staged.preferredFilename, stagedFile: staged))
+                    case .failure(let error):
+                        if error is CancellationError { return }
+                        self.onFailure()
                     }
-                    try DebugLog.shared.measure(.imageImport, file: sourceURL) {
-                        try FileManager.default.copyItem(at: sourceURL, to: temporaryURL)
-                    }
-                    DispatchQueue.main.async {
-                        self.onPick(ImportedImageSelection(url: temporaryURL, preferredFilename: sourceURL.deletingPathExtension().lastPathComponent))
-                    }
-                } catch {
-                    DispatchQueue.main.async { self.onCancel() }
                 }
             }
+            self.selection?.cancel(); self.selection = selection
+            let progress = provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { sourceURL, _ in
+                selection.receive(sourceURL)
+            }
+            selection.setProgress(progress)
         }
     }
 }

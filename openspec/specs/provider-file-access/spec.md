@@ -8,7 +8,9 @@ This spec defines file access, loading limits, saves, and recovery.
 
 A worker runs file operations away from the screen-update thread. The executor schedules those workers with fixed capacity. An access lease keeps iOS file permission active until a worker finishes. A deadline limits how long the user waits; it does not prove that a file operation has stopped. Foreground-active time counts only while Flint is active on screen. A generation identifies the current vault, note, or screen so older results cannot replace newer state.
 
-Status: bounded asynchronous file access, incremental note loading, previews requested by visible rows, and persistent recovery copies are implemented and simulator-tested. Prepared image loading remains planned. Physical-iPhone Dropbox acceptance is still pending. The complete specification is not yet implemented.
+Status: bounded asynchronous file access, incremental note loading, previews requested by visible rows, persistent recovery copies, and prepared image loading are implemented. Automated fixture tests have passed on the simulator and a physical iPhone.
+
+Real-source image checks and physical-iPhone Dropbox acceptance remain pending. The complete specification is not yet implemented.
 
 ## Requirements
 
