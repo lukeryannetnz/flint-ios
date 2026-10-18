@@ -156,22 +156,9 @@ struct VaultBrowserView: View {
                     }
                 }
             }
-            .safeAreaInset(edge: .bottom) {
-                if model.isDiscovering {
-                    HStack {
-                        ProgressView()
-                        Text("Discovering notes: \(model.notes.count) found")
-                        Button("Cancel") { model.cancelDiscovery() }
-                    }.font(.caption).padding().background(.thinMaterial)
-                } else if let error = model.discoveryError {
-                    VStack {
-                        Text("Note list incomplete. " + error).font(.caption)
-                        Button("Retry discovery") { Task { await model.retryDiscovery() } }
-                    }.padding().background(.thinMaterial)
-                }
-            }
+            .safeAreaInset(edge: .top) { discoveryStatus }
             .overlay {
-                if model.notes.isEmpty && !model.isDiscovering && model.discoveryError == nil {
+                if model.notes.isEmpty && model.discoveryState == .complete {
                     ContentUnavailableView(
                         "No Notes Yet",
                         systemImage: "doc.text",
@@ -182,12 +169,24 @@ struct VaultBrowserView: View {
     }
 
     @ViewBuilder
+    private var discoveryStatus: some View {
+        if model.discoveryState == .loading {
+            HStack { ProgressView(); Text("Discovering notes: \(model.notes.count) found"); Button("Cancel") { model.cancelDiscovery() } }
+                .font(.caption).padding().background(.thinMaterial)
+        } else if model.discoveryState == .incomplete {
+            HStack { Text("Note list incomplete. " + (model.discoveryError ?? "Some notes could not be discovered.")); Button("Retry") { model.retryDiscovery() } }
+                .font(.caption).padding().background(.thinMaterial)
+        }
+    }
+
+    @ViewBuilder
     private var detailContent: some View {
         if model.isNoteLoading {
-            VStack(spacing: 16) {
+            VStack(spacing: 12) {
                 ProgressView("Loading note…")
+                Text("You can select another note while this one loads.").foregroundStyle(.secondary)
                 Button("Cancel note loading") { model.cancelNoteLoading() }
-            }
+            }.accessibilityIdentifier("note.loading")
         } else if let error = model.noteLoadError {
             VStack(spacing: 16) {
                 Text(error)
@@ -330,7 +329,8 @@ struct VaultBrowserView: View {
     private var recentNotesList: some View {
         List(selection: $selectedNoteURL) {
             ForEach(model.notes) { note in
-                RecentNoteCard(note: note, model: model)
+                RecentNoteCard(note: note, preview: model.preview(for: note))
+                    .task(id: model.previewDemand(for: note)) { await model.loadPreview(for: note) }
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -369,7 +369,8 @@ struct VaultBrowserView: View {
                     }
 
                     ForEach(currentFolder.notes) { note in
-                        FolderNoteRow(note: note, model: model)
+                        FolderNoteRow(note: note, preview: model.preview(for: note))
+                            .task(id: model.previewDemand(for: note)) { await model.loadPreview(for: note) }
                             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
@@ -825,7 +826,7 @@ private struct ChromeButtonStyle: ViewModifier {
 
 private struct RecentNoteCard: View {
     let note: NoteItem
-    let model: AppModel
+    let preview: NotePreview
 
     var body: some View {
         NoteListCard {
@@ -846,7 +847,7 @@ private struct RecentNoteCard: View {
                     .font(.system(.title3, design: .serif, weight: .semibold))
                     .foregroundStyle(.primary)
 
-                NotePreviewText(note: note, model: model, lineLimit: 4)
+                NotePreviewText(preview: preview, lineLimit: 4)
             }
         }
     }
@@ -854,7 +855,7 @@ private struct RecentNoteCard: View {
 
 private struct FolderNoteRow: View {
     let note: NoteItem
-    let model: AppModel
+    let preview: NotePreview
 
     var body: some View {
         NoteListCard(cornerRadius: 16, padding: 14) {
@@ -871,41 +872,28 @@ private struct FolderNoteRow: View {
                         .foregroundStyle(.tertiary)
                 }
 
-                NotePreviewText(note: note, model: model, lineLimit: 3)
+                NotePreviewText(preview: preview, lineLimit: 3)
             }
         }
     }
 }
 
-private struct PreviewIdentity: Hashable {
-    let note: NoteItem
-    let generation: UUID
-}
-
 private struct NotePreviewText: View {
-    let note: NoteItem
-    @ObservedObject var model: AppModel
+    let preview: NotePreview
     let lineLimit: Int
-    @State private var preview: NotePreview = .omitted
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text((try? AttributedString(markdown: preview.text,
-                options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(preview.text))
-            if case .ready(_, truncated: true) = preview {
-                Text("Preview truncated").font(.caption2)
+        VStack(alignment: .leading, spacing: 3) {
+            switch preview {
+            case .omitted: Text("Preview not loaded")
+            case .loading: Text("Loading preview…")
+            case .unavailable: Text("Preview unavailable")
+            case .empty: Text("Empty note")
+            case let .ready(markdown, truncated):
+                if let attributed = try? AttributedString(markdown: markdown, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) { Text(attributed).lineLimit(lineLimit) }
+                else { Text(markdown).lineLimit(lineLimit) }
+                if truncated { Text("Partial preview").font(.caption2) }
             }
-        }
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-        .lineLimit(lineLimit)
-        .multilineTextAlignment(.leading)
-        .fixedSize(horizontal: false, vertical: true)
-        .task(id: PreviewIdentity(note: note, generation: model.previewGeneration)) {
-            preview = .loading
-            let loaded = await model.preview(for: note)
-            if !Task.isCancelled { preview = loaded }
-        }
+        }.font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
     }
 }
 

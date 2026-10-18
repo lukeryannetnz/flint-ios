@@ -9,6 +9,21 @@ final class NoteImageWorkflowTests: XCTestCase {
         app.launchEnvironment = ["FLINT_IMAGE_TEST_RUN": runID, "FLINT_IMAGE_TEST_NOTE": "Existing.md"]
     }
 
+    func testOversizedNoteShowsErrorAndBrowserCanOpenAnotherNote() {
+        app.launchEnvironment["FLINT_NOTE_LOADING_TEST"] = "oversized"
+        app.launchEnvironment["FLINT_IMAGE_TEST_NOTE"] = "Large.md"
+        app.launch()
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        XCTAssertTrue(alert.staticTexts.containing(NSPredicate(format: "label CONTAINS '8 MiB'")).firstMatch.exists)
+        XCTAssertFalse(app.textViews["note.editor"].exists)
+        alert.buttons["OK"].tap()
+        showBrowser()
+        app.staticTexts["Editable"].firstMatch.tap()
+        XCTAssertTrue(app.textViews["note.editor"].waitForExistence(timeout: 10))
+        XCTAssertTrue((app.textViews["note.editor"].value as? String)?.contains("Before") == true)
+    }
+
     func testFolderCreationUsesDisplayedDestinationAndRecentReturnsToRoot() throws {
         app.launchEnvironment["FLINT_FOLDER_TEST"] = "1"
         app.launch()
