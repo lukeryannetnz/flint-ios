@@ -28,9 +28,10 @@ final class RuntimeDiagnosticsTests: XCTestCase {
         let previous = RestorationSafety(directory: folder)
         let started = await previous.begin(launchID: UUID(), explicit: false)
         XCTAssertTrue(started)
+        await previous.finish(completed: false)
         let next = RestorationSafety(directory: folder)
         let permitted = await next.begin(launchID: UUID(), explicit: false)
-        XCTAssertFalse(permitted)
+        XCTAssertTrue(permitted)
         await next.finish(completed: false)
         let later = await RestorationSafety(directory: folder).begin(launchID: UUID(), explicit: false)
         XCTAssertTrue(later)
@@ -89,7 +90,7 @@ final class RuntimeDiagnosticsTests: XCTestCase {
             await safety.finish(completed: completed)
             await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
             let permitted = await RestorationSafety(directory: folder).begin(launchID: UUID(), explicit: false)
-            XCTAssertTrue(permitted)
+            XCTAssertEqual(permitted, completed)
         }
     }
 

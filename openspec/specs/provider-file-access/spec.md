@@ -79,14 +79,46 @@ The system SHALL expose cancellable loading, a slow state after 5 seconds, and a
 
 ### Requirement: Discover notes without eagerly reading all content
 
-The system SHALL discover note metadata incrementally without eagerly reading content, preserve supported file filters and sort rules, and publish usable partial results. Previews SHALL be demand-driven with bounded reads and caching. Progress SHALL report observed counts and stages without inventing a total or download percentage.
+The system SHALL discover note metadata incrementally without eagerly reading content, preserve supported file filters and sort rules, and publish usable partial results. Previews SHALL be demand-driven with bounded reads and caching. Progress SHALL report observed counts and stages without inventing a total or download percentage. Automatic discovery continuation and visible preview requests SHALL not acquire the vault lane before the initial selected-content read has completed logically, including while restoration safety completion awaits. Each discovery batch SHALL contain at most 64 notes and examine at most 256 entries, release its worker slot between batches, and admit explicit reads ahead of optional continuation work. Metadata failures SHALL be diagnosed and mark discovery incomplete without removing usable results.
+
+#### Scenario: Resume discovery within a new coordination claim
+
+- WHEN discovery continues after its previous coordinated accessor has returned
+- THEN the cursor retains only relative path and directory-name state, never a live enumerator or open handle
+- AND each batch resolves pending paths against the root supplied by its current accessor
+- AND directory-name snapshots are obtained inside coordinated access without reading note content
+- AND metadata processing retains the 256-entry and 64-note batch limits
+
+#### Scenario: Keep note identity stable across provider root relocation
+
+- WHEN a provider supplies a relocated root between discovery batches or note operations
+- THEN all published notes retain stable identities derived from the selected vault URL and relative path
+- AND note content reads, preview reads, writes and note creation resolve those relative paths under their current coordinated root
+- AND content reads and existing-note writes use item-specific coordination after root resolution rather than relying on a directory claim
+- AND previously published notes remain readable after the original physical root disappears
+
+#### Scenario: Refresh finishes during a pending note read
+
+- WHEN an explicit complete refresh finishes while the unchanged document is loading
+- THEN reconciliation is deferred until that read settles
+- AND a missing clean selection opens the first remaining note or clears an empty editor
+- AND later document, vault or metadata generations invalidate deferred reconciliation
+
+#### Scenario: A complete refresh supersedes an older discovery
+
+- WHEN creation or a save publishes a newer complete metadata listing
+- THEN the older incremental cursor is invalidated before that listing is published
+- AND late cursor completion cannot remove newly created notes or restore obsolete metadata
 
 #### Scenario: Bound preview work
 
 - WHEN visible or recently requested notes need previews
 - THEN each preview reads no more than 64 KiB of source and decodes only complete UTF-8 sequences
 - AND omitted, truncated, and unavailable previews are distinguishable
-- AND the preview cache stays within 4 MiB and invalidates on observed content-version changes or explicit refresh
+- AND exact 64 KiB sources are complete previews when a coordinated end-offset check establishes EOF without reading another source byte
+- AND the preview cache stays within 4 MiB and invalidates on observed content-version changes, successful saves, or explicit refresh
+- AND offscreen preview demand is cancelled and stale preview results cannot replace a newer version
+- AND an empty successful source is distinguished from a preview omitted before demand
 - AND discovery preserves regular-file filtering, hidden-file exclusion, supported extensions, relative paths, and existing sort rules
 
 #### Scenario: One provider item is unavailable
@@ -141,6 +173,12 @@ Failed or timed-out writes SHALL retain edits. A timed-out write SHALL report th
 ### Requirement: Bound editable note content
 
 The system SHALL limit a single editable note read to 8 MiB of source bytes, enforce the limit during the read even when size metadata is absent, and report an oversized note as a recoverable read failure. It SHALL NOT silently truncate editable markdown or permit saving a partial read over its source. Markdown preparation SHALL not synchronously read referenced assets.
+
+#### Scenario: Missing or stale size metadata
+
+- WHEN size metadata is missing or a source grows after discovery
+- THEN reads still enforce the 8 MiB limit from actual bytes using bounded chunks
+- AND invalid UTF-8 or an interrupted read never becomes an editable document
 
 #### Scenario: Large or growing provider note
 
@@ -229,6 +267,13 @@ A loading attempt SHALL share one 30-second foreground budget across setup, disc
 A mutation is an operation that changes a file, such as saving or creating it. After a timeout or cancellation, the executor SHALL keep the mutation's actual outcome for the attempt that started it. A retry SHALL first check whether the original operation finished. It SHALL not issue another mutation while the original is still running.
 
 Saves SHALL capture their original text, destination, and revision. A later completion SHALL not clear newer edits. Before navigation, Flint SHALL save unsaved text. If saving cannot be confirmed, it SHALL stay at the original destination unless the user explicitly retains or discards edits through phase 4 recovery.
+
+#### Scenario: A late save is confirmed successful
+
+- WHEN an uncertain save later has an actual successful result
+- THEN its note preview and visible demand are invalidated as for an ordinary success
+- AND metadata finalization uses a fresh foreground attempt rather than the expired mutation attempt
+- AND newer dirty revisions remain eligible for ordered persistence
 
 #### Scenario: Creation finishes after its deadline
 

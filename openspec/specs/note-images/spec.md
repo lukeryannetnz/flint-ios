@@ -152,3 +152,11 @@ Users must be able to keep using Flint while an image is imported. Files selecti
 - WHEN a selected image finishes importing after the user changes notes
 - THEN its result stays associated with the original note
 - AND it does not insert into the new note or delete an asset referenced by saved or unsaved text
+
+#### Scenario: The provider moves the vault before an image read
+
+- GIVEN a note's image reference belongs to the selected vault
+- WHEN the provider supplies a different folder address for that vault
+- THEN the image worker resolves the reference under that current folder
+- AND it uses a separate read claim for the image itself
+- AND the note and stored image reference keep their original logical addresses

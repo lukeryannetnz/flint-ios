@@ -43,14 +43,45 @@ The system SHALL expose cancellable loading, a slow state after 5 seconds, and a
 
 ### Requirement: Discover notes without eagerly reading all content
 
-The system SHALL discover note metadata incrementally without eagerly reading content, preserve supported file filters and sort rules, and publish usable partial results. Previews SHALL be demand-driven with bounded reads and caching. Progress SHALL report observed counts and stages without inventing a total or download percentage.
+The system SHALL discover note metadata incrementally without eagerly reading content, preserve supported file filters and sort rules, and publish usable partial results. Previews SHALL be demand-driven with bounded reads and caching. Progress SHALL report observed counts and stages without inventing a total or download percentage. Automatic discovery continuation and visible preview requests SHALL not acquire the vault lane before the initial selected-content read has completed logically, including while restoration safety completion awaits. Each discovery batch SHALL contain at most 64 notes and examine at most 256 entries, release its worker slot between batches, and admit explicit reads ahead of optional continuation work. Metadata failures SHALL be diagnosed and mark discovery incomplete without removing usable results.
+
+#### Scenario: Resume discovery within a new coordination claim
+
+- WHEN a subsequent batch receives a relocated coordinated root
+- THEN it resumes relative directory/name state under that current root
+- AND no live enumerator or open handle survives the previous accessor
+- AND name snapshots are taken within coordination and metadata processing remains batched
+
+#### Scenario: Keep note identity stable across provider root relocation
+
+- WHEN a provider supplies a relocated root between discovery batches or note operations
+- THEN all published notes retain stable identities derived from the selected vault URL and relative path
+- AND note content reads, preview reads, writes and note creation resolve those relative paths under their current coordinated root
+- AND content reads and existing-note writes use item-specific coordination after root resolution rather than relying on a directory claim
+- AND previously published notes remain readable after the original physical root disappears
+
+#### Scenario: Refresh finishes during a pending note read
+
+- WHEN an explicit complete refresh finishes while the unchanged document is loading
+- THEN reconciliation is deferred until that read settles
+- AND a missing clean selection opens the first remaining note or clears an empty editor
+- AND later document, vault or metadata generations invalidate deferred reconciliation
+
+#### Scenario: A complete refresh supersedes an older discovery
+
+- WHEN creation or a save publishes a newer complete metadata listing
+- THEN the older incremental cursor is invalidated before that listing is published
+- AND late cursor completion cannot remove newly created notes or restore obsolete metadata
 
 #### Scenario: Bound preview work
 
 - WHEN visible or recently requested notes need previews
 - THEN each preview reads no more than 64 KiB of source and decodes only complete UTF-8 sequences
 - AND omitted, truncated, and unavailable previews are distinguishable
-- AND the preview cache stays within 4 MiB and invalidates on observed content-version changes or explicit refresh
+- AND exact 64 KiB sources are complete previews when a coordinated end-offset check establishes EOF without reading another source byte
+- AND the preview cache stays within 4 MiB and invalidates on observed content-version changes, successful saves, or explicit refresh
+- AND offscreen preview demand is cancelled and stale preview results cannot replace a newer version
+- AND an empty successful source is distinguished from a preview omitted before demand
 - AND discovery preserves regular-file filtering, hidden-file exclusion, supported extensions, relative paths, and existing sort rules
 
 #### Scenario: One provider item is unavailable
@@ -103,6 +134,12 @@ The system SHALL capture destination, access lease, text revision, and operation
 ### Requirement: Bound editable note content
 
 The system SHALL limit a single editable note read to 8 MiB of source bytes, enforce the limit during the read even when size metadata is absent, and report an oversized note as a recoverable read failure. It SHALL NOT silently truncate editable markdown or permit saving a partial read over its source. Markdown preparation SHALL not synchronously read referenced assets.
+
+#### Scenario: Missing or stale size metadata
+
+- WHEN size metadata is missing or a source grows after discovery
+- THEN reads still enforce the 8 MiB limit from actual bytes using bounded chunks
+- AND invalid UTF-8 or an interrupted read never becomes an editable document
 
 #### Scenario: Large or growing provider note
 
@@ -184,6 +221,13 @@ Vault-file methods SHALL accept a request carrying vault-root identity, foregrou
 
 The executor SHALL retain an actual mutation outcome for the owning attempt after logical timeout or cancellation. A retry SHALL first establish whether the original write/create finished, without issuing another mutation while it drains. Saves SHALL snapshot their original text, destination and revision; an asynchronous completion SHALL not clear newer edits. Navigation SHALL first save dirty text and remain at its original destination if saving cannot be established, unless the user explicitly retains or discards edits using phase 4 recovery.
 
+#### Scenario: A late save is confirmed successful
+
+- WHEN an uncertain save later has an actual successful result
+- THEN its note preview and visible demand are invalidated as for an ordinary success
+- AND metadata finalization uses a fresh foreground attempt rather than the expired mutation attempt
+- AND newer dirty revisions remain eligible for ordered persistence
+
 #### Scenario: Creation finishes after its deadline
 
 - WHEN the user retries a timed-out creation
@@ -252,9 +296,13 @@ Actual mutation outcomes SHALL preserve created URLs, complete image-import resu
 
 ### Requirement: Phase 4 loading and document recovery contract
 
-Discovery SHALL publish at most 64 inspected entries per worker batch, yielding provider capacity between batches. The browser SHALL show observed notes while discovery continues, expose cancellation and retry after incomplete discovery, and select an initial note once from the first usable sorted batch unless the user has already selected one. Selected reads SHALL have an independent foreground deadline. Preview demand SHALL originate from visible rows, use at most 64 KiB of source, and retain at most 4 MiB in a version-aware cache. An 8 MiB editable-note limit SHALL be enforced by bounded reads even without reliable size metadata.
+Discovery means finding note files and reading their file details. It SHALL inspect no more than 64 entries in one worker batch, then release capacity for other file work. The browser SHALL show notes as they are found and SHALL offer cancel and retry when discovery is incomplete. Flint SHALL choose an initial note once from the first usable, sorted batch, unless the user has already chosen a note.
 
-Failed save-before-navigation SHALL offer Stay, Retain edits and continue, and Discard edits and continue. Retain SHALL commit an atomic protected app-local recovery record containing the original vault, note destination, and exact text before navigation proceeds. Recovery records SHALL survive relaunch, remain separate from diagnostic export, and be listed with their original destination for explicit restore or deletion. Restoration SHALL require the matching vault and note, and SHALL never automatically overwrite provider content. Discard SHALL explain that an already-running write may still finish. Uncertain writes SHALL prevent overlapping saves to the same destination even after navigation.
+The selected note SHALL load under its own foreground time limit. A preview is a short excerpt shown in the note list. Flint SHALL load previews only for visible rows, read no more than 64 KiB for each, and keep no more than 4 MiB of previews in its cache. The cache SHALL account for observed file changes and clear on explicit refresh. Flint SHALL enforce an 8 MiB limit while reading editable note text, even when file-size details are missing or wrong.
+
+If a save fails before navigation, Flint SHALL offer Stay, Retain edits and continue, or Discard edits and continue. Retain SHALL first save the exact text, vault, and note destination in a protected local recovery record. The record SHALL survive relaunch and remain separate from diagnostic exports. Flint SHALL show the saved destination and require the matching vault and note before restoring. It SHALL never write retained text back automatically.
+
+Discard SHALL tell the user that a write already running in a provider may still finish. Flint SHALL prevent a second write to the same destination until an uncertain first write has finished. This rule still applies after the user changes notes or vaults.
 
 #### Scenario: Discovery fails after a batch
 
@@ -270,7 +318,7 @@ Failed save-before-navigation SHALL offer Stay, Retain edits and continue, and D
 
 ### Requirement: Present edit recovery after dismissing source sheets
 
-Navigation initiated by a create-note sheet or vault picker SHALL begin only after that sheet has dismissed. The retain/discard decision SHALL render directly from model state in the root presentation, without relying on a second UIKit modal or treating an automatic presentation dismissal as a user choice. Dismissing a sheet without confirming a destination SHALL not navigate.
+When the user starts navigation from the create-note sheet or vault picker, Flint SHALL wait until the sheet is closed before navigating. The retain/discard choice SHALL appear from the app's current model state. Closing a sheet by itself SHALL not count as a choice or start navigation.
 
 #### Scenario: A new-note action needs edit recovery
 
@@ -280,7 +328,7 @@ Navigation initiated by a create-note sheet or vault picker SHALL begin only aft
 
 ### Requirement: Recovery-copy actions remain independent
 
-Deleting a retained copy SHALL only remove that copy. It SHALL not restore text, navigate to the original note, or start a provider save. Restore and Delete controls SHALL have independent hit targets in the recovery list.
+Deleting a retained copy SHALL remove only that copy. It SHALL not restore text, open the original note, or save to the provider. Restore and Delete SHALL be separate actions in the recovery list.
 
 #### Scenario: Delete after navigating away
 

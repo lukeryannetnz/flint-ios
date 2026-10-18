@@ -236,6 +236,21 @@ final class PreparedImageLoaderTests: XCTestCase {
         XCTAssertEqual(bytes, 0)
     }
 
+    func testImageReadResolvesProviderRootBeforeClaimingTheImage() async throws {
+        let imageURL = try fixture(width: 300, height: 150)
+        let logicalRoot = root.appendingPathComponent("OriginalVault", isDirectory: true)
+        let coordinator = RelocatedImageCoordinator(logicalRoot: logicalRoot, currentRoot: root)
+        let executor = ProviderExecutor(coordinatorFactory: { coordinator })
+        let loader = PreparedImageLoader(executor: executor)
+        let reference = NoteImageReference(assetURL: logicalRoot.appendingPathComponent(imageURL.lastPathComponent), vaultURL: logicalRoot)
+        let result = try await loader.image(for: reference, size: .inline)
+        XCTAssertEqual(result.image.cgImage?.width, 300)
+        XCTAssertEqual(coordinator.claims.count, 2)
+        XCTAssertEqual(coordinator.claims.first, logicalRoot)
+        XCTAssertEqual(coordinator.claims.last?.resolvingSymlinksInPath().standardizedFileURL,
+            imageURL.resolvingSymlinksInPath().standardizedFileURL)
+    }
+
     private func waitForWaiters(_ loader: PreparedImageLoader, count: Int) async {
         let end = Date().addingTimeInterval(5)
         while await loader.waiterCount < count, Date() < end { await Task.yield() }
@@ -264,6 +279,19 @@ private final class ImageReadGate: ProviderCoordinating {
     let gate: DispatchSemaphore
     init(entered: XCTestExpectation, gate: DispatchSemaphore) { self.entered = entered; self.gate = gate }
     func read(at url: URL, accessor: (URL) -> Void) throws { entered.fulfill(); gate.wait(); accessor(url) }
+    func write(at url: URL, accessor: (URL) -> Void) throws { accessor(url) }
+    func cancel() {}
+}
+
+private final class RelocatedImageCoordinator: ProviderCoordinating {
+    let logicalRoot: URL
+    let currentRoot: URL
+    var claims: [URL] = []
+    init(logicalRoot: URL, currentRoot: URL) { self.logicalRoot = logicalRoot; self.currentRoot = currentRoot }
+    func read(at url: URL, accessor: (URL) -> Void) throws {
+        claims.append(url)
+        accessor(url == logicalRoot ? currentRoot : url)
+    }
     func write(at url: URL, accessor: (URL) -> Void) throws { accessor(url) }
     func cancel() {}
 }

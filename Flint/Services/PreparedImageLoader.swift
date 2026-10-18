@@ -134,12 +134,16 @@ actor PreparedImageLoader {
             let request = ProviderRequest(vaultURL: reference.vaultURL, attempt: attempt,
                                           priority: optional ? .optional : .explicit)
             let source: Source = try await executor.execute(request, step: .imageRead) { context in
-                let root = reference.vaultURL.resolvingSymlinksInPath().standardizedFileURL
-                let candidate = reference.assetURL.resolvingSymlinksInPath().standardizedFileURL
-                guard candidate.path.hasPrefix(root.path + "/") else { throw VaultError.inaccessibleVault }
-                return try context.coordinated(.coordinationRead, at: candidate) { coordinatedURL in
+                let location = try context.coordinated(.coordinationRead, at: reference.vaultURL) { currentRoot -> (url: URL, root: URL) in
+                    let root = currentRoot.resolvingSymlinksInPath().standardizedFileURL
+                    let candidate = try VaultFileService.resolvedItem(reference.assetURL, in: reference.vaultURL,
+                        currentRoot: currentRoot).resolvingSymlinksInPath().standardizedFileURL
+                    guard candidate.path.hasPrefix(root.path + "/") else { throw VaultError.inaccessibleVault }
+                    return (candidate, root)
+                }
+                return try context.coordinated(.coordinationRead, at: location.url) { coordinatedURL in
                     var url = coordinatedURL.resolvingSymlinksInPath().standardizedFileURL
-                    guard url.path.hasPrefix(root.path + "/") else { throw VaultError.inaccessibleVault }
+                    guard url.path.hasPrefix(location.root.path + "/") else { throw VaultError.inaccessibleVault }
                     url.removeAllCachedResourceValues()
                     let details = try url.resourceValues(forKeys: [.contentModificationDateKey, .creationDateKey, .fileSizeKey, .isRegularFileKey])
                     guard details.isRegularFile == true else { throw VaultError.inaccessibleVault }
