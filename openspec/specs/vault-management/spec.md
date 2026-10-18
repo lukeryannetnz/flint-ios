@@ -2,7 +2,9 @@
 
 ## Purpose
 
-Define how Flint lets users create a new vault or open an existing vault folder from Files providers while preserving future access with bookmarks.
+Users need to create a folder for their notes or open a folder they already use. The folder may be on the device or supplied through Files by a service such as Dropbox. Flint must preserve permission to reopen it later.
+
+This spec defines vault creation, folder selection, name validation, and progress feedback. A vault is the selected folder and its contents. A bookmark is saved iOS permission data for reopening that folder. Coordinated file access means asking iOS to arrange safe reads and writes with the file provider.
 
 ## Requirements
 

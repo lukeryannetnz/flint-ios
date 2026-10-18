@@ -1,5 +1,11 @@
 # AGENTS.md
 
+## Writing Requirement
+
+Write specs and PR descriptions in plain English. Start by explaining the problem, who it affects, and why the change matters. Then describe the intended behavior.
+
+Use short sentences and familiar words. Explain technical terms before using them. Keep one main idea per paragraph, and use concrete examples where they make the behavior easier to understand. Preserve precise requirements when simplifying the wording.
+
 ## OpenSpec Requirement
 
 Before building any feature or making any code, spec, or configuration change in this repository, update the relevant OpenSpec documentation first.

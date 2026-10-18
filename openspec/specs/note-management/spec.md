@@ -2,13 +2,17 @@
 
 ## Purpose
 
-Define how Flint exposes markdown notes within a selected vault, including note discovery, note creation, rich text editing, markdown persistence, and autosave behavior.
+Users need to find, create, read, and edit notes without losing their work. Flint displays formatted text while keeping notes as portable Markdown files in the selected vault.
+
+This spec defines note browsing, creation, editing, formatting, and saving. Rich text means the formatted document shown in the editor. Markdown is the plain-text file format used to store that document. Autosave saves edits after a short pause in typing.
 
 ## Requirements
 
 ### Requirement: Separate note data from document presentation
 
-The implementation SHALL keep vault and note value models independent of UIKit. Rich text conversion and formatting SHALL live in a dedicated module, image attachment rendering SHALL live alongside that module in a separate implementation file, and markdown document normalization and HTML rendering SHALL live in a Foundation-only module.
+Vault and note value models SHALL remain independent of UIKit, the iOS interface framework. Rich text conversion and formatting SHALL live in a dedicated module. Image attachment rendering SHALL live beside that module in a separate implementation file.
+
+Markdown document normalization and HTML rendering SHALL live in a Foundation-only module, without UIKit dependencies.
 
 #### Scenario: Maintain document presentation independently
 
@@ -34,7 +38,7 @@ The system SHALL list markdown files found anywhere inside the active vault.
 
 ### Requirement: Show styled note previews in note lists
 
-The system SHALL present a compact markdown-aware preview for each listed note so the sidebar matches the rendered document style instead of showing a flattened raw text dump.
+The system SHALL present a short preview that uses Markdown formatting for each listed note so users can recognize the note's structure while browsing.
 
 #### Scenario: Render a markdown-aware preview in the recent notes list
 
@@ -53,9 +57,11 @@ The system SHALL present a compact markdown-aware preview for each listed note s
 
 ### Requirement: Auto-select an available note
 
-The system SHALL select a note automatically when notes exist and no current selection can be preserved.
+Flint SHALL automatically select a note when notes exist and the current selection cannot be kept.
 
-Note-list refresh SHALL update metadata without launching background navigation tasks. Vault opening SHALL establish a selection or pending-content state when usable metadata is published; content loads SHALL be explicit, cancellable, and tied to the current selection generation. Note creation SHALL open only its created note, and metadata refresh after saving SHALL NOT launch fallback navigation.
+Refreshing the note list SHALL update file details without starting background navigation tasks. When vault opening publishes usable file details, it SHALL establish a selected note or a state showing that its content is still loading. Content loads SHALL be explicit, cancellable, and tied to the current selection generation. That generation identifies the selection request so older results cannot replace a newer choice.
+
+Note creation SHALL open only the note it created. Refreshing file details after saving SHALL NOT start fallback navigation.
 
 #### Scenario: Open another vault
 
@@ -189,7 +195,7 @@ The system SHALL load the selected note's UTF-8 markdown source and present it a
 
 The system SHALL autosave rich text edits shortly after the user stops typing.
 
-#### Scenario: Debounced autosave
+#### Scenario: Save after a pause in typing
 
 - GIVEN a note is selected
 - WHEN the user edits the rich text document
@@ -217,7 +223,7 @@ The system SHALL present both reading and editing using the same rich text surfa
 - AND Flint presents the note title using the same visual scale as an H1 heading
 - AND raw markdown syntax is not shown in the main note experience
 - AND links remain tappable
-- AND Flint does not show separate read mode or edit mode labels in the main note chrome
+- AND Flint does not show separate read mode or edit mode labels in the main note controls
 
 #### Scenario: Tap displayed content to edit in place
 
@@ -258,7 +264,7 @@ The system SHALL provide native-feeling controls for common note formatting.
 - WHEN the insertion point or selection changes
 - THEN Flint updates formatting controls to reflect the current selection state
 - AND Flint exposes controls for headings, lists, bold, italic, links, quotes, and code-style treatment
-- AND Flint keeps those controls available through a refined toolbar, menu, or contextual control surface
+- AND Flint keeps those controls available through a toolbar, menu, or controls shown for the current selection
 
 #### Scenario: Apply inline formatting
 
@@ -330,13 +336,13 @@ The system SHALL provide predictable list, paragraph splitting, and insertion be
 
 ### Requirement: Empty state and placeholder behavior
 
-The system SHALL provide a clear writing affordance when a note has no visible content.
+The system SHALL provide a clear way to start writing when a note has no visible content.
 
 #### Scenario: Empty note placeholder
 
 - GIVEN the selected note has no visible rich text content
 - WHEN the note is shown
-- THEN Flint displays a refined placeholder inviting the user to start writing
+- THEN Flint displays a placeholder inviting the user to start writing
 - AND the first tap activates editing at the start of the document
 
 ### Requirement: Paste normalization
@@ -368,7 +374,7 @@ The system SHALL continue storing notes as markdown files while keeping that rep
 - WHEN Flint loads and later saves that note through the rich text editor
 - THEN text inside the fenced code block remains literal code content
 - AND Flint does not reinterpret inline markdown markers inside that code block as emphasis or links
-- AND Flint does not introduce a phantom blank code line before the closing fence during round-trip serialization
+- AND Flint does not introduce a phantom blank code line before the closing fence during loading and saving
 
 #### Scenario: Preserve escaped markdown punctuation
 
@@ -397,7 +403,9 @@ The system SHALL autosave note edits without displaying a persistent save-status
 
 ### Requirement: Programmatic selection does not request navigation
 
-When the browser synchronizes its selection with the model, it SHALL not issue another note read for that same selected URL. Only a different user-requested URL SHALL start navigation; synchronization SHALL not cancel a newer pending read or restore an older selection.
+When the browser updates its selection to match the model, it SHALL not read that selected URL again. Only a different URL requested by the user SHALL start navigation.
+
+This synchronization SHALL not cancel a newer pending read or restore an older selection.
 
 #### Scenario: Initial read overlaps browser appearance
 
@@ -407,7 +415,9 @@ When the browser synchronizes its selection with the model, it SHALL not issue a
 
 ### Requirement: Reconcile pending browser selection
 
-The model SHALL publish pending note selection separately from retained editor content. Failed or cancelled navigation SHALL reset that selection to the retained note, allowing the failed row to be selected again immediately. Late completion SHALL not reset a newer pending selection.
+The model SHALL publish the note being requested separately from the note content still held in the editor. If navigation fails or is cancelled, the browser selection SHALL return to the retained note. This SHALL let the user retry the failed row immediately.
+
+A late completion SHALL not reset a newer pending selection.
 
 #### Scenario: Retry a failed or cancelled row
 
