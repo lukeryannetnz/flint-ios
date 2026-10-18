@@ -109,4 +109,3 @@ Phase 5 commit `e1b3ec8` was integrated with provider-review base `11fbc30`. The
 - Both runs fail `RuntimeDiagnosticsTests.testTimedOutTerminalWritesNeverAuthorizeRelaunch`: the final assertion expects automatic restoration to be denied after an abandoned marker, while the current implementation permits it. This test and implementation are unchanged from the latest base. The intended abandoned-marker policy needs reconciliation before merge.
 - The phone also fails `testRetainEditsAllowsNavigationAndListsOriginalDestination` while waiting for `After Recovery.md` after retaining edits. The simulator passes this flow. The cause is unresolved; this is not treated as a passing retry.
 - All prepared-image tests pass on both devices. Strict OpenSpec validation passes. The PR remains a draft while these complete-suite failures and real-source acceptance remain unresolved.
-
