@@ -10,7 +10,7 @@ This spec defines the repository's OpenSpec support, README overview, and shared
 
 ### Requirement: README overview
 
-The root README SHALL explain Flint's scope. It SHALL link to `openspec/specs/` for current behavior and `openspec/changes/` for proposed changes. It SHALL not duplicate feature or specification lists.
+The root README SHALL explain Flint's scope. It SHALL identify `openspec/specs/` as the source of truth for current behavior and link to it. It SHALL link to `openspec/changes/` for proposed changes. It SHALL not duplicate feature or specification lists.
 
 The architecture overview SHALL use a simplified Mermaid diagram and plain-language descriptions of the main responsibilities. It SHALL describe how the parts fit together rather than list individual files.
 

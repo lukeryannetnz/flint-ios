@@ -48,7 +48,9 @@ The system SHALL save versioned debug logs in protected app storage on the iPhon
 - AND a logging error does not trigger an endless stream of new log errors or crash the app
 
 ### Requirement: Share a safe logging interface with recovery features
-The logger SHALL provide defined action and step identifiers, error categories filtered for privacy, and asynchronous snapshots of complete saved entries. A snapshot is a copy of the saved log entries available at the time of the request.
+The logger SHALL provide typed action and step identifiers. Typed identifiers use declared code types so the compiler can check which values callers supply, rather than accepting arbitrary strings.
+
+The logger SHALL also provide error categories filtered for privacy and asynchronous snapshots of complete saved entries. A snapshot is a copy of the saved log entries available at the time of the request.
 
 Snapshot reads SHALL use only app-local storage and skip invalid or incomplete records. No logging interface SHALL accept arbitrary messages or document text.
 

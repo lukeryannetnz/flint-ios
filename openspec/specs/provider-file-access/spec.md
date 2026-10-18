@@ -272,7 +272,7 @@ A successful note creation SHALL retain its destination URL until discovery and 
 
 ### Requirement: Recover image imports that finish late
 
-Mutation results SHALL distinguish a created URL, a complete image-import result, and a save that returns no value.
+Mutation results SHALL preserve a created URL, a complete image-import result, and a save that returns no value as distinct typed values. Each case SHALL use a declared type that lets the compiler check its associated value, rather than an untyped payload with a label.
 
 During the current process, Flint SHALL retain successful image imports that finish after timeout or become stale after navigation. Each result SHALL stay associated with its original note URL. If that note has an unresolved import, another import SHALL not create a replacement asset.
 
