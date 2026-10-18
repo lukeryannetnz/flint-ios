@@ -219,7 +219,7 @@ Vault-file methods SHALL accept a request carrying vault-root identity, foregrou
 
 ### Requirement: Keep uncertain mutations separate from retries
 
-The executor SHALL retain an actual mutation outcome for the owning attempt after logical timeout or cancellation. A retry SHALL first establish whether the original write/create finished, without issuing another mutation while it drains. Saves SHALL snapshot their original text, destination and revision; an asynchronous completion SHALL not clear newer edits. Navigation SHALL first save dirty text and remain at its original destination if saving cannot be established. Explicit retain/discard recovery storage is added in phase 4.
+The executor SHALL retain an actual mutation outcome for the owning attempt after logical timeout or cancellation. A retry SHALL first establish whether the original write/create finished, without issuing another mutation while it drains. Saves SHALL snapshot their original text, destination and revision; an asynchronous completion SHALL not clear newer edits. Navigation SHALL first save dirty text and remain at its original destination if saving cannot be established, unless the user explicitly retains or discards edits using phase 4 recovery.
 
 #### Scenario: A late save is confirmed successful
 
@@ -292,3 +292,46 @@ Actual mutation outcomes SHALL preserve created URLs, complete image-import resu
 - WHEN a timed-out import has actually failed or never started
 - THEN a new source selection removes that resolved failure before admission
 - AND no Recover action is required to start the replacement
+
+
+### Requirement: Phase 4 loading and document recovery contract
+
+Discovery means finding note files and reading their file details. It SHALL inspect no more than 64 entries in one worker batch, then release capacity for other file work. The browser SHALL show notes as they are found and SHALL offer cancel and retry when discovery is incomplete. Flint SHALL choose an initial note once from the first usable, sorted batch, unless the user has already chosen a note.
+
+The selected note SHALL load under its own foreground time limit. A preview is a short excerpt shown in the note list. Flint SHALL load previews only for visible rows, read no more than 64 KiB for each, and keep no more than 4 MiB of previews in its cache. The cache SHALL account for observed file changes and clear on explicit refresh. Flint SHALL enforce an 8 MiB limit while reading editable note text, even when file-size details are missing or wrong.
+
+If a save fails before navigation, Flint SHALL offer Stay, Retain edits and continue, or Discard edits and continue. Retain SHALL first save the exact text, vault, and note destination in a protected local recovery record. The record SHALL survive relaunch and remain separate from diagnostic exports. Flint SHALL show the saved destination and require the matching vault and note before restoring. It SHALL never write retained text back automatically.
+
+Discard SHALL tell the user that a write already running in a provider may still finish. Flint SHALL prevent a second write to the same destination until an uncertain first write has finished. This rule still applies after the user changes notes or vaults.
+
+#### Scenario: Discovery fails after a batch
+
+- WHEN a later batch fails after metadata has been published
+- THEN the browser retains discovered notes and shows incomplete discovery with Retry
+- AND an empty list during discovery or after failure is not presented as an empty-vault success
+
+#### Scenario: Retained edits survive relaunch
+
+- WHEN the user retains edits after a failed save and relaunches Flint
+- THEN the recovery list identifies the original destination and restores the exact retained text only into that note
+- AND failed recovery storage leaves the current unsaved editor intact
+
+### Requirement: Present edit recovery after dismissing source sheets
+
+When the user starts navigation from the create-note sheet or vault picker, Flint SHALL wait until the sheet is closed before navigating. The retain/discard choice SHALL appear from the app's current model state. Closing a sheet by itself SHALL not count as a choice or start navigation.
+
+#### Scenario: A new-note action needs edit recovery
+
+- WHEN the user confirms creation while the current note cannot be saved
+- THEN the new-note sheet dismisses before the recovery decision is presented
+- AND the requested name and destination folder are preserved until the decision completes
+
+### Requirement: Recovery-copy actions remain independent
+
+Deleting a retained copy SHALL remove only that copy. It SHALL not restore text, open the original note, or save to the provider. Restore and Delete SHALL be separate actions in the recovery list.
+
+#### Scenario: Delete after navigating away
+
+- WHEN the user deletes a recovery copy while another note is selected
+- THEN the selected note and its editor remain unchanged
+- AND the recovery list remains open until explicitly dismissed

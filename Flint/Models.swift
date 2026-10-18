@@ -1,5 +1,21 @@
 import Foundation
 
+enum NotePreview: Equatable {
+    case omitted, loading, unavailable, empty
+    case ready(String, truncated: Bool)
+
+    var text: String {
+        switch self {
+        case .omitted: return "Preview not requested."
+        case .loading: return "Loading preview…"
+        case .unavailable: return "Preview unavailable."
+        case .empty: return "Empty note."
+        case let .ready(text, _): return text.isEmpty ? "No preview text." : text
+        }
+    }
+    var byteCost: Int { max(1, text.utf8.count) }
+}
+
 struct Vault: Equatable {
     let name: String
     let url: URL
@@ -148,15 +164,6 @@ enum NoteDiscoveryState: Equatable {
     case idle, loading, complete, incomplete
 }
 
-enum NotePreview: Equatable {
-    case omitted, pending, unavailable, empty
-    case available(String, truncated: Bool)
-
-    var byteCost: Int {
-        if case let .available(text, _) = self { return max(1, text.utf8.count) }
-        return 1
-    }
-}
 
 /// Cache and presentation share the same values; no second unbounded copy is retained.
 @MainActor

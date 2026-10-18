@@ -2,13 +2,47 @@
 
 ## Purpose
 
-Define intended responsive, bounded, and data-safe file access for local and Files-provider vaults, including partially downloaded Dropbox content. These requirements are planned and do not claim implementation is complete.
+Users may open a vault whose files are slow to download or temporarily unavailable. Waiting for a file provider such as Dropbox must not freeze Flint or put unsaved edits at risk. Users need to browse available notes, cancel stalled work, and recover their edits.
+
+This spec defines file access, loading limits, saves, and recovery.
+
+A worker runs file operations away from the screen-update thread. The executor schedules those workers with fixed capacity. An access lease keeps iOS file permission active until a worker finishes. A deadline limits how long the user waits; it does not prove that a file operation has stopped. Foreground-active time counts only while Flint is active on screen. A generation identifies the current vault, note, or screen so older results cannot replace newer state.
+
+Status: bounded asynchronous file access, incremental note loading, previews requested by visible rows, and persistent recovery copies are implemented and simulator-tested. Prepared image loading remains planned. Physical-iPhone Dropbox acceptance is still pending. The complete specification is not yet implemented.
 
 ## Requirements
 
-### Requirement: Isolate blocking file and image work from the main actor
+### Requirement: Phase 4 loading and document recovery contract
 
-The system SHALL perform bookmark resolution/creation, security-scoped resource acquisition, file coordination, enumeration, resource metadata lookup, note and preview reads, note/vault creation, note writes, image import/copy/encoding, image file reads, and image decoding outside the main actor. UI state publication and UIKit view updates SHALL remain on the main actor. Wrapping synchronous work in a main-actor Task SHALL NOT satisfy this requirement.
+Flint SHALL inspect and publish at most 64 file entries in each discovery batch. Between batches, it SHALL let other provider work use the worker capacity. The browser SHALL show notes as they are found. If discovery is incomplete, it SHALL offer cancellation and retry. It SHALL choose an initial note once, from the first usable sorted batch, unless the user has already chosen one.
+
+Reading the selected note SHALL have its own foreground deadline. Only visible rows SHALL request previews. Each preview SHALL read at most 64 KiB of source. The preview cache SHALL hold at most 4 MiB and track content versions. Editable notes SHALL be limited to 8 MiB, with that limit enforced during reading even if file size details are unreliable.
+
+If saving before navigation fails, Flint SHALL offer Stay, Retain edits and continue, and Discard edits and continue. Before continuing after Retain, it SHALL save a protected recovery copy in app-local storage. The write SHALL be atomic: either the complete record is saved or navigation does not proceed. The record SHALL contain the original vault, note destination, and exact text.
+
+Recovery copies SHALL survive relaunch and remain separate from diagnostic exports. The recovery list SHALL show each copy's original destination and offer explicit restore and delete actions. Restore SHALL require the matching vault and note. It SHALL never overwrite provider content automatically.
+
+Discard SHALL explain that a write already in progress may still finish. If a write's outcome is uncertain, Flint SHALL prevent another save to that destination from overlapping it, even after navigation.
+
+#### Scenario: Discovery fails after a batch
+
+- WHEN a later batch fails after metadata has been published
+- THEN the browser retains discovered notes and shows incomplete discovery with Retry
+- AND an empty list during discovery or after failure is not presented as an empty-vault success
+
+#### Scenario: Retained edits survive relaunch
+
+- WHEN the user retains edits after a failed save and relaunches Flint
+- THEN the recovery list identifies the original destination and restores the exact retained text only into that note
+- AND failed recovery storage leaves the current unsaved editor intact
+
+### Requirement: Keep blocking file and image work off the screen-update thread
+
+The system SHALL perform bookmark resolution/creation, security-scoped resource acquisition, file coordination, enumeration, resource metadata lookup, note and preview reads, note/vault creation, note writes, image import/copy/encoding, image file reads, and image decoding outside the main actor.
+
+UI state publication and UIKit view updates SHALL remain on the main actor.
+
+Wrapping synchronous work in a main-actor Task SHALL NOT satisfy this requirement.
 
 #### Scenario: Restore a provider-backed vault
 
@@ -108,12 +142,14 @@ The system SHALL show the browser once usable metadata is available and separate
 
 ### Requirement: Preserve edits across asynchronous saves and navigation
 
-The system SHALL capture destination, access lease, text revision, and operation identity for ordered, debounced saves. Completion SHALL clear dirty state only for the current revision. Failed or timed-out writes SHALL retain edits; timed-out writes SHALL report uncertain outcomes and prohibit overlapping retries. Navigation SHALL persist edits or obtain an explicit retain/discard choice.
+For each save, Flint SHALL capture the destination, access lease, text revision, and operation identity. Saves SHALL run in order after the typing pause used for autosave. A completed save SHALL clear unsaved state only if it saved the current text revision.
+
+Failed or timed-out writes SHALL retain edits. A timed-out write SHALL report that its outcome is uncertain and prevent overlapping retries. Before navigation, Flint SHALL save edits or obtain an explicit choice to retain or discard them.
 
 #### Scenario: Retry after an uncertain write
 
 - WHEN a write exceeds its deadline while its accessor remains active
-- THEN Flint retains text and dirty state and reports an uncertain outcome
+- THEN Flint retains text and unsaved state and reports an uncertain outcome
 - AND retry waits for the original write to finish rather than overlapping it
 - AND save identity retains its original destination and lease
 - AND choosing to retain edits creates a local recovery copy separate from diagnostics
@@ -169,7 +205,7 @@ The system SHALL resolve, load, and downsample images asynchronously, show stabl
 - AND layout does not synchronously request source bytes or decode the image
 - AND successful completion updates only an attachment belonging to the current document generation
 - AND the caption and stored markdown reference remain unchanged
-- AND unavailable, invalid, or failed images retain a readable placeholder and retry affordance
+- AND unavailable, invalid, or failed images retain a readable placeholder and way to retry
 
 #### Scenario: Viewer opens during image loading
 
@@ -179,7 +215,11 @@ The system SHALL resolve, load, and downsample images asynchronously, show stabl
 
 ### Requirement: Import images without blocking editing or losing managed assets
 
-The system SHALL copy or encode selected image sources into managed vault assets off the main actor and insert markdown only after a successful import for the current document generation. The import SHALL retain required source and destination access for its actual duration. A failed or cancelled import SHALL not report successful insertion; any completed but unreferenced asset SHALL be handled separately without deleting assets referenced by unsaved or saved text.
+The system SHALL copy or encode selected image sources into managed vault assets off the main actor and insert markdown only after a successful import for the current document generation.
+
+The import SHALL retain required source and destination access for its actual duration.
+
+A failed or cancelled import SHALL not report successful insertion; any completed but unreferenced asset SHALL be handled separately without deleting assets referenced by unsaved or saved text.
 
 #### Scenario: Provider source becomes unavailable during import
 
@@ -204,7 +244,9 @@ The implementation SHALL include deterministic tests with controllable blocking 
 
 ### Requirement: Carry explicit asynchronous request identity
 
-Vault-file methods SHALL accept a request carrying vault-root identity, foreground deadline, priority and attempt identity, and SHALL return asynchronously with a value or typed cancellation/timeout/capacity failure. Bookmark resolution and creation SHALL use the same bounded executor. A loading attempt SHALL share a single 30-second foreground budget across setup, discovery and initial content; starting another stage SHALL not reset it.
+Each vault-file request SHALL identify its vault root, foreground deadline, priority, and attempt. It SHALL return asynchronously with a value or a typed failure that distinguishes cancellation, timeout, and lack of capacity. Resolving and creating bookmarks SHALL use the same executor with bounded worker capacity.
+
+A loading attempt SHALL share one 30-second foreground budget across setup, discovery, and initial content. Starting another stage SHALL not reset that budget.
 
 #### Scenario: Late setup completion
 
@@ -220,7 +262,9 @@ Vault-file methods SHALL accept a request carrying vault-root identity, foregrou
 
 ### Requirement: Keep uncertain mutations separate from retries
 
-The executor SHALL retain an actual mutation outcome for the owning attempt after logical timeout or cancellation. A retry SHALL first establish whether the original write/create finished, without issuing another mutation while it drains. Saves SHALL snapshot their original text, destination and revision; an asynchronous completion SHALL not clear newer edits. Navigation SHALL first save dirty text and remain at its original destination if saving cannot be established. Explicit retain/discard recovery storage is added in phase 4.
+A mutation is an operation that changes a file, such as saving or creating it. After a timeout or cancellation, the executor SHALL keep the mutation's actual outcome for the attempt that started it. A retry SHALL first check whether the original operation finished. It SHALL not issue another mutation while the original is still running.
+
+Saves SHALL capture their original text, destination, and revision. A later completion SHALL not clear newer edits. Before navigation, Flint SHALL save unsaved text. If saving cannot be confirmed, it SHALL stay at the original destination unless the user explicitly retains or discards edits through phase 4 recovery.
 
 #### Scenario: A late save is confirmed successful
 
@@ -247,7 +291,7 @@ Loading SHALL publish current stage and a slow indicator, allow cancellation, an
 - AND it creates no extra provider threads or unbounded queued retries
 - AND local diagnostic sharing remains available
 
-### Requirement: Retain successful creation through follow-up failure
+### Requirement: Remember a created note if the next step fails
 
 A successful note creation SHALL retain its destination URL until discovery and selection succeed. Retrying the same creation name and folder after refresh/read failure SHALL reuse that result and SHALL not issue another create mutation. Switching vault generations SHALL discard obsolete creation presentation state.
 
@@ -271,9 +315,15 @@ A successful note creation SHALL retain its destination URL until discovery and 
 - AND the creation busy indicator clears
 - AND the created URL remains available for retry
 
-### Requirement: Recover typed late image outcomes
+### Requirement: Recover image imports that finish late
 
-Actual mutation outcomes SHALL preserve created URLs, complete image-import results and valueless saves as distinct typed values. During the current process, the model SHALL retain timed-out or stale successful imports by their original note URL. Another import for a note with unresolved outcomes SHALL not create a replacement asset. Explicit recovery in that original note SHALL insert the completed result at the current cursor once, without copying or encoding again. A running import SHALL remain pending; an actual failure SHALL permit a new source selection. Navigation SHALL not discard a pending result or insert it into another note. No recovery path SHALL delete a referenced asset. Durable pending-asset reconciliation across relaunch remains part of the later image workflow.
+Mutation results SHALL preserve a created URL, a complete image-import result, and a save that returns no value as distinct typed values. Each case SHALL use a declared type that lets the compiler check its associated value, rather than an untyped payload with a label.
+
+During the current process, Flint SHALL retain successful image imports that finish after timeout or become stale after navigation. Each result SHALL stay associated with its original note URL. If that note has an unresolved import, another import SHALL not create a replacement asset.
+
+Explicit recovery in the original note SHALL insert the completed result once at the current cursor. It SHALL not copy or encode the image again. A running import SHALL remain pending. An import that actually failed SHALL allow a new source selection.
+
+Navigation SHALL not discard a pending result or insert it into another note. No recovery path SHALL delete a referenced asset. Recovery of pending assets across relaunch remains part of the later image workflow.
 
 #### Scenario: Image import succeeds after timeout
 
@@ -293,3 +343,25 @@ Actual mutation outcomes SHALL preserve created URLs, complete image-import resu
 - WHEN a timed-out import has actually failed or never started
 - THEN a new source selection removes that resolved failure before admission
 - AND no Recover action is required to start the replacement
+
+### Requirement: Present edit recovery after dismissing source sheets
+
+When a create-note sheet or vault picker requests navigation, that sheet SHALL dismiss before navigation begins. The root screen SHALL show the retain/discard decision directly from model state. It SHALL not depend on opening a second UIKit modal. Automatic dismissal SHALL not count as a user choice.
+
+Dismissing a sheet without confirming a destination SHALL not navigate.
+
+#### Scenario: A new-note action needs edit recovery
+
+- WHEN the user confirms creation while the current note cannot be saved
+- THEN the new-note sheet dismisses before the recovery decision is presented
+- AND the requested name and destination folder are preserved until the decision completes
+
+### Requirement: Recovery-copy actions remain independent
+
+Deleting a retained copy SHALL only remove that copy. It SHALL not restore text, navigate to the original note, or start a provider save. Restore and Delete controls SHALL have independent hit targets in the recovery list.
+
+#### Scenario: Delete after navigating away
+
+- WHEN the user deletes a recovery copy while another note is selected
+- THEN the selected note and its editor remain unchanged
+- AND the recovery list remains open until explicitly dismissed

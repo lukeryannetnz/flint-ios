@@ -2,43 +2,57 @@
 
 ## Purpose
 
-Define the intended logging, local performance telemetry, crash evidence, and recovery behavior needed to diagnose physical-device failures with partially downloaded Files-provider vaults. The diagnostic journal foundation, platform evidence collection, restoration safety, and foreground monitoring are implemented and simulator-tested. Asynchronous provider access and diagnostic sharing remain planned. Physical-iPhone Dropbox validation remains pending; this status does not establish that the reported provider hangs or terminations are resolved.
+When Flint freezes or closes while opening provider files, users need a safe way back to their notes. Developers need evidence that explains which step failed without collecting private note content. A missing final log entry alone cannot prove that the app crashed.
+
+This spec defines debug logs, performance measurements, platform crash evidence, recovery, and diagnostic sharing.
+
+A file provider is a service such as Dropbox that supplies files through Files. A bookmark is saved iOS permission data for reopening a folder. The main actor manages interface state on the screen-update thread. An accessor is the part of a coordinated file operation that performs the read or write. A restoration marker is a small local record of whether reopening the saved vault started and finished.
+
+Status: debug logging, platform evidence collection, restoration safety, and foreground monitoring are implemented and simulator-tested. Bounded asynchronous file access, incremental note loading, document recovery, and bounded recovery sharing are also implemented. Prepared image loading and the complete diagnostic preview and clear-history workflow remain planned. Physical-iPhone Dropbox validation is pending. The reported provider hangs or unexpected terminations have not been established as resolved.
 
 ## Requirements
 
 ### Requirement: Correlate structured runtime events
 
-The system SHALL record structured diagnostics in Debug and Release builds from process startup, before bookmark restoration or provider access. Events SHALL include schema version, UTC timestamp, monotonic elapsed time, severity, category, build/version, launch identifier, operation identifier, parent operation identifier where applicable, stage, and outcome. Operation outcomes SHALL distinguish success, failure, cancellation, timeout, and abandoned work.
+The system SHALL record structured diagnostics in Debug and Release builds from process startup, before bookmark restoration or provider access.
+
+Events SHALL include log format version, UTC timestamp, elapsed time measured independently of the wall clock, severity, category, build/version, launch identifier, operation identifier, parent operation identifier where applicable, stage, and outcome.
+
+Operation outcomes SHALL distinguish success, failure, cancellation, timeout, and abandoned work.
 
 #### Scenario: Trace a provider-backed launch
 
 - WHEN Flint restores a vault
 - THEN correlated events cover bookmark resolution, security-scoped access, coordination wait, enumeration, metadata lookup, preview reads, initial note read, markdown conversion, image loading, and first usable screen
 - AND coordination wait is distinguishable from time spent inside its accessor
-- AND every completed operation has one terminal outcome
-- AND late worker completion after timeout is recorded separately without a second terminal outcome
+- AND every completed operation has one final outcome
+- AND late worker completion after timeout is recorded separately without a second final outcome
 
 ### Requirement: Preserve actionable errors without private content
 
-The system SHALL record sanitized error domains, codes, bounded underlying-error chains, operation stages, and available provider observations. It SHALL distinguish unavailable content, missing files, permission failures, coordination failures, invalid bookmarks, decode failures, and unknown errors when evidence supports those distinctions. It SHALL NOT infer Dropbox or download state from a path or assume iCloud resource keys describe third-party provider availability.
+The system SHALL record sanitized error domains, codes, bounded underlying-error chains, operation stages, and available provider observations.
+
+It SHALL distinguish unavailable content, missing files, permission failures, coordination failures, invalid bookmarks, decode failures, and unknown errors when evidence supports those distinctions.
+
+It SHALL NOT infer Dropbox or download state from a path or assume iCloud resource keys describe third-party provider availability.
 
 #### Scenario: Preview generation fails
 
 - WHEN an optional preview or metadata read fails
 - THEN Flint records the failure even if the note list uses a fallback
 - AND the event distinguishes the fallback from an empty successful read
-- AND provider and materialization observations are marked unknown when unavailable
+- AND observations about the provider and whether file contents are available are marked unknown when unavailable
 
 #### Scenario: Error includes sensitive information
 
 - WHEN an error contains note text, a filename, a path, or a provider account identifier
-- THEN persisted and exported diagnostics contain only allowlisted fields and opaque resource identifiers
+- THEN persisted and exported diagnostics contain only explicitly permitted fields and file identifiers that reveal no names or paths
 - AND note contents, titles, image contents, alt text, absolute or relative paths, bookmark data, credentials, and unrestricted localized error text are excluded
 - AND resource identifiers are scoped to a launch rather than stable user tracking identifiers
 
 ### Requirement: Measure performance without creating another stall
 
-The system SHALL measure launch duration, time to first usable screen, coordination wait and accessor duration, enumeration counts and progress, preview/read/decode durations, observed byte counts, save outcomes, memory warnings, and foreground main-thread responsiveness. Signpost intervals SHALL allow device profiling. Diagnostics SHALL NOT read provider files or synchronously write logs on the main thread.
+The system SHALL measure launch duration, time to first usable screen, coordination wait and accessor duration, enumeration counts and progress, preview/read/decode durations, observed byte counts, save outcomes, memory warnings, and foreground main-thread responsiveness. Signpost intervals, which mark timed actions for Apple performance tools, SHALL allow device profiling. Diagnostics SHALL NOT read provider files or synchronously write logs on the main thread.
 
 #### Scenario: Provider blocks during enumeration
 
@@ -58,7 +72,7 @@ The system SHALL measure launch duration, time to first usable screen, coordinat
 
 ### Requirement: Keep local diagnostic storage bounded and independent of the vault
 
-The system SHALL retain sanitized versioned diagnostics and launch markers in protected app-local storage outside the vault. Retention SHALL be limited to 20 MiB and 7 days, tolerate incomplete records, and rotate oldest records first. A fixed-capacity event queue SHALL drop records with truncation accounting rather than blocking user operations under backpressure.
+The system SHALL retain sanitized versioned diagnostics and launch markers in protected app-local storage outside the vault. Retention SHALL be limited to 20 MiB and 7 days, tolerate incomplete records, and rotate oldest records first. A fixed-capacity event queue SHALL drop records with truncation accounting rather than blocking user operations when log writing falls behind.
 
 #### Scenario: Logging storage is unavailable
 
@@ -141,7 +155,9 @@ The system SHALL offer a user-initiated bounded diagnostic export from onboardin
 
 ### Requirement: Validate diagnostics and recovery against provider faults
 
-The change SHALL include deterministic tests for blocking coordination before an accessor, blocking inside an accessor, unavailable content, permission denial, partial enumeration, decode failure, failed writes, late completion, diagnostics disk failure, corrupt history, and interrupted restoration. Physical-iPhone validation with a Dropbox Files-provider vault SHALL be recorded before the change is considered validated.
+The change SHALL include deterministic tests for blocking coordination before an accessor, blocking inside an accessor, unavailable content, permission denial, partial enumeration, decode failure, failed writes, late completion, diagnostics disk failure, corrupt history, and interrupted restoration.
+
+Physical-iPhone validation with a Dropbox Files-provider vault SHALL be recorded before the change is considered validated.
 
 #### Scenario: Simulator fault coverage
 
@@ -162,7 +178,11 @@ The change SHALL include deterministic tests for blocking coordination before an
 
 ### Requirement: Persist restoration safety before automatic access
 
-Restoration safety storage SHALL use a dedicated app-local writer and a one-second maximum asynchronous wait. A versioned marker SHALL contain only launch/action IDs, timestamps, and started/completed/abandoned state. Missing storage is safe only when no marker exists; corrupt or unreadable storage and failed/timed-out writes SHALL require explicit recovery. Late writer completion SHALL not authorize provider work. At most one safety request SHALL be admitted until its writer actually completes; repeated retry SHALL fail safely rather than queue more writes. Retry SHALL be explicit; choosing another vault SHALL preserve the saved bookmark until a new selection is made.
+Flint SHALL use a dedicated app-local writer for restoration safety records. Calls SHALL wait asynchronously for at most one second. A versioned marker SHALL contain only launch and action IDs, timestamps, and a started, completed, or abandoned state.
+
+Missing storage SHALL be considered safe only when no marker exists. Corrupt or unreadable storage, failed writes, and timed-out writes SHALL require explicit recovery. A writer that finishes late SHALL not authorize provider work.
+
+Until the writer actually finishes, at most one safety request SHALL be accepted. Repeated retries SHALL fail safely instead of queuing more writes. Retry SHALL require a user action. Choosing another vault SHALL preserve the saved bookmark until a new selection is made.
 
 #### Scenario: Safety storage fails
 
@@ -173,7 +193,11 @@ Restoration safety storage SHALL use a dedicated app-local writer and a one-seco
 
 ### Requirement: Bound and sanitize platform evidence
 
-MetricKit ingestion SHALL use a serial app-local writer with at most eight waiting deliveries. Only original report windows, validated app version/build identities, diagnostic kinds, numeric aggregate measurements, UUIDs, stack/thread topology, and numeric stack-frame fields SHALL be retained. Binary names, exception descriptions, arbitrary metadata and signpost strings SHALL be omitted. Unknown build correlation SHALL stay unknown, and receiving launch IDs SHALL never be treated as the report's originating launch. Sanitized reports SHALL deduplicate by canonical content and share the journal's aggregate 20 MiB/seven-day retention budget.
+MetricKit, Apple's source of app performance and diagnostic reports, SHALL deliver evidence to a serial app-local writer. At most eight deliveries SHALL wait in its queue.
+
+Flint SHALL retain only original report time windows, validated app version and build identities, diagnostic kinds, numeric aggregate measurements, UUIDs, stack and thread structure, and numeric stack-frame fields. It SHALL omit binary names, exception descriptions, arbitrary metadata, and signpost strings.
+
+If the report's build is unknown, it SHALL remain unknown. The launch receiving a report SHALL never be treated as the launch that produced it. Reports with the same canonical content SHALL be stored once. Sanitized reports SHALL share the debug log's total retention budget of 20 MiB and seven days.
 
 #### Scenario: Older delivery contains private fields
 
@@ -184,7 +208,11 @@ MetricKit ingestion SHALL use a serial app-local writer with at most eight waiti
 
 ### Requirement: Independently observe foreground progress
 
-A utility timer SHALL inspect a thread-safe action snapshot and schedule at most one outstanding main-queue heartbeat. Each action SHALL emit at most one slow observation after five foreground seconds. A heartbeat gap of two seconds SHALL emit one suspected stall and one recovery duration; inactive transitions SHALL reset heartbeat gaps and pause action accumulation. Monitoring SHALL not depend on the log writer, provider workers, or main actor for sampling.
+A utility timer SHALL inspect a thread-safe snapshot of current actions. It SHALL schedule at most one outstanding heartbeat, a small task on the main queue used to check whether that queue is responding.
+
+Each action SHALL produce at most one slow observation after five foreground seconds. A heartbeat gap of two seconds SHALL produce one suspected-stall event and one recovery duration when the queue responds again. Inactive transitions SHALL reset heartbeat gaps and pause action elapsed time.
+
+Sampling SHALL not depend on the log writer, provider workers, or main actor making progress.
 
 #### Scenario: Suspension overlaps a pending heartbeat
 
@@ -209,7 +237,11 @@ A utility timer SHALL inspect a thread-safe action snapshot and schedule at most
 
 ### Requirement: Share a bounded local recovery snapshot
 
-Phase 3 recovery SHALL asynchronously stage one user-initiated sanitized snapshot of journal and platform evidence outside the vault, with a 20 MiB maximum and no automatic upload. Staging SHALL serialize exports, clean temporary data after sharing/cancellation and on next startup, and disclose uncertain correlations, missing evidence and truncation. The complete preview/clear-history workflow remains planned for phase 6.
+Phase 3 recovery SHALL asynchronously stage one user-initiated sanitized snapshot of journal and platform evidence outside the vault, with a 20 MiB maximum and no automatic upload.
+
+Staging SHALL serialize exports, clean temporary data after sharing/cancellation and on next startup, and disclose uncertain correlations, missing evidence and truncation.
+
+The complete preview/clear-history workflow remains planned for phase 6.
 
 #### Scenario: Sharing while provider access is blocked
 

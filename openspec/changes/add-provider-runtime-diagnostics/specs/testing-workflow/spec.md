@@ -30,12 +30,12 @@ Blocked-worker fault tests SHALL distinguish logical deadline completion from ac
 - AND it verifies capacity and scope balance after completion
 - AND scheduler delays do not change the tested foreground deadline
 
-### Requirement: Exercise bounded note loading through the browser
+### Requirement: Exercise edit recovery through the visible navigation flow
 
-The simulator UI suite SHALL exercise oversized selected content through the real file adapter and verify that the browser remains usable without an editable placeholder. Fault fixtures SHALL be confined to a UUID-scoped app-local test directory and excluded from Release behavior.
+Simulator UI coverage SHALL exercise a failed save followed by the explicit retain-and-continue choice and verify that navigation proceeds and the retained copy appears with its original destination. Tests SHALL clean up their retained copy explicitly.
 
-#### Scenario: Oversized initial note
+#### Scenario: Retain edits while creating another note
 
-- WHEN a fixture exceeds the 8 MiB read limit
-- THEN the app presents the size-limit error without an editable partial document
-- AND the user can dismiss the error and select another note successfully
+- WHEN saving the current note fails and the user creates another note
+- THEN the visible recovery controls allow retaining edits before navigation
+- AND the retained-copy list identifies the original note after navigation

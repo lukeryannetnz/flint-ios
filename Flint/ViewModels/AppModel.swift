@@ -24,6 +24,18 @@ final class AppModel: ObservableObject {
         let revision: Int
     }
 
+    enum NavigationRecoveryChoice { case stay, retain, discard }
+    @Published private(set) var needsNavigationRecovery = false
+    @Published private(set) var retainedDocuments: [RecoveredDocument] = []
+    @Published private(set) var previewGeneration = UUID()
+    @Published private(set) var isDiscovering = false
+    @Published private(set) var discoveryError: String?
+    @Published private(set) var noteLoadError: String?
+    private var navigationDecision: CheckedContinuation<NavigationRecoveryChoice, Never>?
+    private let documentRecovery: DocumentRecoveryStore
+    private var failedNote: NoteItem?
+    private var uncertainWrites: [URL: UncertainSave] = [:]
+
     @Published private(set) var phase: Phase = .loading
     @Published private(set) var activeVault: Vault?
     @Published private(set) var notes: [NoteItem] = []
@@ -69,7 +81,10 @@ final class AppModel: ObservableObject {
     private var progressTask: Task<Void, Never>?
     private var autosaveTask: Task<Void, Never>?
     private var saveTask: (id: UUID, task: Task<Void, Never>)?
-    private var uncertainSave: UncertainSave?
+    private var uncertainSave: UncertainSave? {
+        get { selectedNote.flatMap { uncertainWrites[$0.url] } }
+        set { if let url = selectedNote?.url { uncertainWrites[url] = newValue } }
+    }
     private var pendingImageImports: [URL: [PendingImageImport]] = [:]
     private var inFlightImageImports: [URL: UUID] = [:]
     private var completedNoteCreations: [NoteCreationKey: URL] = [:]
@@ -80,14 +95,16 @@ final class AppModel: ObservableObject {
     init(bookmarkStore: VaultBookmarkStoring, fileService: VaultFileServing,
          restorationSafety: RestorationSafetyChecking = RestorationSafety.shared,
          executor: ProviderExecutor = .shared, attemptFactory: @escaping () -> ProviderAttempt = { ProviderAttempt() },
-         shareStore: DiagnosticShareStore = .shared) {
+         shareStore: DiagnosticShareStore = .shared, documentRecovery: DocumentRecoveryStore = .shared) {
         self.bookmarkStore = bookmarkStore; self.fileService = fileService; self.restorationSafety = restorationSafety
         self.executor = executor; self.attemptFactory = attemptFactory; self.shareStore = shareStore
+        self.documentRecovery = documentRecovery
     }
 
     func bootstrap() async {
         await DebugLog.shared.measureAsync(.launch) {
             guard !didBootstrap else { return }; didBootstrap = true
+            await refreshRetainedDocuments()
             #if DEBUG
             if ImageWorkflowTestSupport.active {
                 do {
@@ -150,7 +167,7 @@ final class AppModel: ObservableObject {
 
     func cancelNoteLoading() {
         noteAttempt?.cancel(); noteAttempt = nil; documentGeneration = UUID()
-        isNoteLoading = false; isBusy = false; requestedNoteURL = selectedNote?.url; failedNoteURL = nil
+        isNoteLoading = false; isBusy = false; requestedNoteURL = selectedNote?.url; failedNoteURL = nil; noteLoadError = nil; failedNote = nil
     }
 
     private func restoreBookmark(_ bookmark: Data, explicit: Bool) async {
@@ -219,10 +236,19 @@ final class AppModel: ObservableObject {
         discoveryState = batch.cursor != nil ? .loading : batch.incomplete ? .incomplete : .complete
         metadataGeneration = UUID(); let metadata = metadataGeneration
         let initiallySeen = Set(notes.map(\.url))
-        // Publish the browser, but admit initial content before optional continuation can take its lane.
-        if let first = notes.first { await openNote(first, initialAttempt: attempt, onStarted: onUsable) }
-        else { await onUsable?() }
+        // Reserve the first selection before safety work can suspend. Load its text
+        // only after restoration safety has finalized the launch marker.
+        if let first = notes.first {
+            requestedNoteURL = first.url
+            isNoteLoading = true
+        }
+        await onUsable?()
         guard vaultGeneration == generation else { return }
+        guard current(generation, attempt) else { return }
+        if let first = notes.first, requestedNoteURL == first.url, selectedNote == nil {
+            await openNote(first)
+        }
+        guard current(generation, attempt), metadataGeneration == metadata else { return }
         initialContentPending = false
         previewEpoch = UUID(); previewRevision += 1
         guard metadataGeneration == metadata else { return }
@@ -319,12 +345,17 @@ final class AppModel: ObservableObject {
         startDiscovery(root: root, cursor: nil, seen: [], incomplete: false, generation: vaultGeneration, reconcileSelection: true)
     }
 
+    func cancelDiscovery() {
+        discoveryAttempt?.cancel(); discoveryAttempt = nil; discoveryTask?.cancel(); discoveryTask = nil
+        discoveryState = .incomplete; discoveryError = "Discovery was cancelled. The note list may be incomplete."
+    }
+
     func previewDemand(for note: NoteItem) -> NotePreviewDemand {
         NotePreviewDemand(note: note, epoch: previewEpoch, version: previewVersions[note.url])
     }
 
     func preview(for note: NoteItem) -> NotePreview {
-        if previewRequests[note.url] != nil { return .pending }
+        if previewRequests[note.url] != nil { return .loading }
         return previewCache.value(for: note) ?? .omitted
     }
 
@@ -379,13 +410,15 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func openNote(_ note: NoteItem, initialAttempt: ProviderAttempt? = nil, onStarted: (() async -> Void)? = nil) async {
-        guard let root = activeVault?.url, await prepareNavigation() else { return }
+    func openNote(_ note: NoteItem) async { _ = await loadNote(note) }
+
+    private func loadNote(_ note: NoteItem) async -> UUID? {
+        guard let root = activeVault?.url, await prepareNavigation() else { return nil }
         let vault = vaultGeneration
-        noteAttempt?.cancel(); let attempt = initialAttempt ?? attemptFactory(); noteAttempt = attempt
+        noteAttempt?.cancel(); let attempt = attemptFactory(); noteAttempt = attempt
         pendingRefreshReconciliation = nil
         documentGeneration = UUID(); let document = documentGeneration
-        requestedNoteURL = note.url; failedNoteURL = nil; alertMessage = nil
+        requestedNoteURL = note.url; failedNoteURL = nil; alertMessage = nil; noteLoadError = nil; failedNote = nil
         isNoteLoading = true; isBusy = true
         defer {
             if documentGeneration == document {
@@ -401,15 +434,15 @@ final class AppModel: ObservableObject {
                 }
             }
         }
-        await onStarted?()
-        guard vaultGeneration == vault, documentGeneration == document, !attempt.cancelled else { return }
         do {
             let text = try await fileService.readNote(at: note.url, request: ProviderRequest(vaultURL: root, attempt: attempt))
-            guard vaultGeneration == vault, documentGeneration == document, !attempt.cancelled else { return }
+            guard vaultGeneration == vault, documentGeneration == document, !attempt.cancelled else { return nil }
             selectedNote = note; noteText = text; revision = 0; hasUnsavedChanges = false; uncertainSave = nil
+            return document
         } catch {
-            guard vaultGeneration == vault, documentGeneration == document else { return }
-            failedNoteURL = note.url; alertMessage = error.localizedDescription
+            guard vaultGeneration == vault, documentGeneration == document else { return nil }
+            failedNoteURL = note.url; failedNote = note; noteLoadError = error.localizedDescription; alertMessage = error.localizedDescription
+            return nil
         }
     }
 
@@ -461,7 +494,7 @@ final class AppModel: ObservableObject {
     }
 
     func updateNoteText(_ text: String) {
-        guard !isNoteLoading, selectedNote != nil else { return }
+        guard !isNoteLoading, selectedNote != nil, requestedNoteURL == selectedNote?.url else { return }
         noteText = text; revision += 1; hasUnsavedChanges = true; scheduleAutosave()
     }
 
@@ -636,10 +669,50 @@ final class AppModel: ObservableObject {
     func finishDiagnosticShare() { diagnosticShare = nil; shareStore.cleanup() }
     func clearAlert() { alertMessage = nil }
 
+    func retryRequestedNote() async { if let note = failedNote { await openNote(note) } }
+    func resolveNavigationRecovery(_ choice: NavigationRecoveryChoice) {
+        needsNavigationRecovery = false
+        let decision = navigationDecision; navigationDecision = nil
+        decision?.resume(returning: choice)
+    }
+    func refreshRetainedDocuments() async {
+        do { retainedDocuments = try await documentRecovery.list() }
+        catch { alertMessage = "Retained edits could not be loaded. Please try again." }
+    }
+    func discardRetainedDocument(_ document: RecoveredDocument) async {
+        do { try await documentRecovery.remove(document); await refreshRetainedDocuments() }
+        catch { alertMessage = "Retained edits could not be removed." }
+    }
+    func restoreRetainedDocument(_ document: RecoveredDocument) async {
+        guard activeVault?.url == document.vaultURL, let note = notes.first(where: { $0.url == document.noteURL }) else {
+            alertMessage = "Open the original vault and note before restoring these edits."; return
+        }
+        guard let generation = await loadNote(note), documentGeneration == generation,
+              activeVault?.url == document.vaultURL, selectedNote?.url == document.noteURL,
+              noteLoadError == nil, !isNoteLoading else { return }
+        updateNoteText(document.text)
+    }
+
     private func prepareNavigation() async -> Bool {
+        guard navigationDecision == nil else { return false }
         let navigation = UUID(); navigationGeneration = navigation
         await saveCurrentNoteIfNeeded()
-        return navigationGeneration == navigation && !hasUnsavedChanges
+        guard navigationGeneration == navigation else { return false }
+        guard hasUnsavedChanges else { return true }
+        guard let note = selectedNote, let root = activeVault?.url else { return false }
+        let choice = await withCheckedContinuation { continuation in
+            navigationDecision = continuation; needsNavigationRecovery = true
+        }
+        guard navigationGeneration == navigation else { return false }
+        switch choice {
+        case .stay: return false
+        case .retain:
+            do { _ = try await documentRecovery.retain(vaultURL: root, noteURL: note.url, text: noteText); await refreshRetainedDocuments() }
+            catch { alertMessage = "Edits could not be retained locally. Stay in this note and retry."; return false }
+        case .discard: break
+        }
+        autosaveTask?.cancel(); autosaveTask = nil; hasUnsavedChanges = false
+        return true
     }
     private func beginLoading(_ attempt: ProviderAttempt, target: RecoveryTarget) -> UUID {
         loadingAttempt?.cancel(); noteAttempt?.cancel(); noteAttempt = nil

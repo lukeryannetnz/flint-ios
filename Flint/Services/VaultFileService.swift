@@ -35,6 +35,8 @@ protocol VaultFileServing {
     func listMarkdownNotes(in vaultURL: URL, request: ProviderRequest) async throws -> [NoteItem]
     func discoverNotes(in vaultURL: URL, cursor: NoteDiscoveryCursor?, request: ProviderRequest) async throws -> NoteDiscoveryBatch
     func readPreview(for note: NoteItem, request: ProviderRequest) async throws -> NotePreview
+    func preview(for note: NoteItem, request: ProviderRequest) async throws -> NotePreview
+    func invalidatePreviews()
     func createNote(named name: String, in directoryURL: URL, request: ProviderRequest) async throws -> URL
     func readNote(at url: URL, request: ProviderRequest) async throws -> String
     func saveNote(_ text: String, at url: URL, request: ProviderRequest) async throws
@@ -59,18 +61,33 @@ extension VaultFileServing {
         NoteDiscoveryBatch(notes: try await listMarkdownNotes(in: vaultURL, request: request), cursor: nil)
     }
     func readPreview(for note: NoteItem, request: ProviderRequest) async throws -> NotePreview { .unavailable }
+    func preview(for note: NoteItem, request: ProviderRequest) async throws -> NotePreview { try await readPreview(for: note, request: request) }
+    func invalidatePreviews() {}
 }
 
 final class VaultFileService: VaultFileServing {
     private let fileManager: FileManager
     private let executor: ProviderExecutor
     private let metadata: (URL) throws -> URLResourceValues
+    private struct PreviewEntry { let modified: Date?; let size: Int?; let preview: NotePreview; let cost: Int }
+    private let previewCacheLimit: Int
+    private let previewLock = NSLock()
+    private var previewCache: [URL: PreviewEntry] = [:]
+    private var previewOrder: [URL] = []
+    private var previewBytes = 0
+    private var previewEpoch = 0
+    var cachedPreviewBytes: Int { previewLock.lock(); defer { previewLock.unlock() }; return previewBytes }
+    func invalidatePreviews() {
+        previewLock.lock(); defer { previewLock.unlock() }
+        previewCache = [:]; previewOrder = []; previewBytes = 0; previewEpoch += 1
+    }
 
-    init(fileManager: FileManager = .default, executor: ProviderExecutor = .shared,
+    init(fileManager: FileManager = .default, executor: ProviderExecutor = .shared, previewCacheLimit: Int = 4 * 1024 * 1024,
          metadata: @escaping (URL) throws -> URLResourceValues = { try $0.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .creationDateKey, .contentModificationDateKey, .fileSizeKey]) }) {
         self.fileManager = fileManager
         self.executor = executor
         self.metadata = metadata
+        self.previewCacheLimit = max(0, previewCacheLimit)
     }
 
 
@@ -96,7 +113,16 @@ final class VaultFileService: VaultFileServing {
     func readPreview(for note: NoteItem, request: ProviderRequest) async throws -> NotePreview {
         try await executor.execute(request, step: .preview) { context in
             try self.coordinatedItem(at: note.url, in: request.vaultURL, step: .coordinationRead, context: context) { url in
+                var observedURL = url; observedURL.removeAllCachedResourceValues()
+                let values = try? observedURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
                 let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
+                self.previewLock.lock()
+                let epoch = self.previewEpoch
+                if let values, let cached = self.previewCache[note.url], cached.modified == values.contentModificationDate, cached.size == values.fileSize {
+                    self.previewOrder.removeAll { $0 == note.url }; self.previewOrder.append(note.url)
+                    self.previewLock.unlock(); return cached.preview
+                }
+                self.previewLock.unlock()
                 let prefix = try Self.readPrefix(limit: 64 * 1024, check: context.checkCancellation, hasMore: {
                     try context.checkCancellation()
                     let offset = try handle.offset()
@@ -104,8 +130,21 @@ final class VaultFileService: VaultFileServing {
                 }) { try handle.read(upToCount: $0) ?? Data() }
                 let text = try Self.decodePreviewPrefix(prefix.data, truncated: prefix.truncated)
                 DebugLog.shared.observe(.preview, bytes: prefix.data.count)
-                if text.isEmpty { return .empty }
-                return .available(self.makePreviewMarkdown(contents: text, for: note.url), truncated: prefix.truncated)
+                let preview: NotePreview = text.isEmpty ? .empty : .ready(self.makePreviewMarkdown(contents: text, for: note.url), truncated: prefix.truncated)
+                let cost = max(256, preview.byteCost + note.url.absoluteString.utf8.count * 2)
+                self.previewLock.lock(); defer { self.previewLock.unlock() }
+                guard epoch == self.previewEpoch else { return preview }
+                if let old = self.previewCache.removeValue(forKey: note.url) { self.previewBytes -= old.cost }
+                self.previewOrder.removeAll { $0 == note.url }
+                while self.previewBytes + cost > self.previewCacheLimit, let oldest = self.previewOrder.first {
+                    self.previewOrder.removeFirst()
+                    if let old = self.previewCache.removeValue(forKey: oldest) { self.previewBytes -= old.cost }
+                }
+                if cost <= self.previewCacheLimit {
+                    self.previewCache[note.url] = PreviewEntry(modified: values?.contentModificationDate, size: values?.fileSize, preview: preview, cost: cost)
+                    self.previewOrder.append(note.url); self.previewBytes += cost
+                }
+                return preview
             }
         }
     }
@@ -243,7 +282,7 @@ final class VaultFileService: VaultFileServing {
             if chunk.isEmpty { return (data, false) }
             data.append(chunk)
         }
-        return (data, try hasMore())
+        return (data, data.count == limit ? try hasMore() : false)
     }
     static func decodePreviewPrefix(_ data: Data, truncated: Bool) throws -> String {
         if let text = String(data: data, encoding: .utf8) { return text }

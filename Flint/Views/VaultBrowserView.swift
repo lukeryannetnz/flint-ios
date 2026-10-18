@@ -28,9 +28,12 @@ struct VaultBrowserView: View {
 
     @ObservedObject var model: AppModel
 
+    @State private var isShowingRetainedEdits = false
     @State private var selectedNoteURL: URL?
     @State private var isShowingOpenPicker = false
     @State private var isShowingCreateNoteSheet = false
+    @State private var pendingNoteCreation: (name: String, folder: [String])?
+    @State private var pendingVaultURL: URL?
     @State private var noteName = ""
     @State private var browserMode: BrowserMode = .recent
     @State private var folderPathComponents: [String] = []
@@ -53,18 +56,48 @@ struct VaultBrowserView: View {
             .onChange(of: selectedNoteURL) { _, newValue in
                 handleSelectedNoteURLChange(newValue)
             }
-            .sheet(isPresented: $isShowingOpenPicker) {
+            .sheet(isPresented: $isShowingOpenPicker, onDismiss: {
+                guard let url = pendingVaultURL else { return }
+                pendingVaultURL = nil
+                Task { await model.openVault(at: url) }
+            }) {
                 FolderPicker { url in
+                    pendingVaultURL = url
                     isShowingOpenPicker = false
-                    Task {
-                        await model.openVault(at: url)
-                    }
                 } onCancel: {
                     isShowingOpenPicker = false
                 }
             }
-            .sheet(isPresented: $isShowingCreateNoteSheet) {
+            .sheet(isPresented: $isShowingCreateNoteSheet, onDismiss: {
+                guard let creation = pendingNoteCreation else { return }
+                pendingNoteCreation = nil
+                Task { await model.createNote(named: creation.name, inFolderPath: creation.folder) }
+            }) {
                 createNoteSheet
+            }
+            .sheet(isPresented: $isShowingRetainedEdits) {
+                NavigationStack {
+                    List(model.retainedDocuments) { document in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(document.noteURL.lastPathComponent).font(.headline)
+                            Text(document.vaultURL.lastPathComponent + " / " + document.noteURL.path.replacingOccurrences(of: document.vaultURL.path + "/", with: ""))
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text(document.savedAt, style: .date)
+                            Button("Restore edits into original note") {
+                                isShowingRetainedEdits = false
+                                Task { await model.restoreRetainedDocument(document) }
+                            }
+                            Button("Delete retained copy", role: .destructive) {
+                                Task { await model.discardRetainedDocument(document) }
+                            }
+                            .accessibilityIdentifier("recovery.delete.\(document.noteURL.path)")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .navigationTitle("Retained edits")
+                    .toolbar { Button("Done") { isShowingRetainedEdits = false } }
+                    .task { await model.refreshRetainedDocuments() }
+                }
             }
             .overlay {
                 if model.isBusy && !model.isNoteLoading {
@@ -111,16 +144,17 @@ struct VaultBrowserView: View {
                     .accessibilityIdentifier("note.create")
 
                     Button {
+                        isShowingRetainedEdits = true
+                    } label: {
+                        Label("Retained edits", systemImage: "arrow.uturn.backward")
+                    }
+                    .accessibilityIdentifier("note.retained-edits")
+
+                    Button {
                         isShowingOpenPicker = true
                     } label: {
                         Label("Open Vault", systemImage: "folder")
                     }
-
-                    Button { model.retryDiscovery() } label: {
-                        Label("Refresh notes", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(model.discoveryState == .loading)
-                    .accessibilityIdentifier("notes.refresh")
                 }
             }
             .safeAreaInset(edge: .top) { discoveryStatus }
@@ -136,14 +170,32 @@ struct VaultBrowserView: View {
     }
 
     @ViewBuilder
+    private var discoveryStatus: some View {
+        if model.discoveryState == .loading {
+            HStack { ProgressView(); Text("Discovering notes: \(model.notes.count) found"); Button("Cancel") { model.cancelDiscovery() } }
+                .font(.caption).padding().background(.thinMaterial)
+        } else if model.discoveryState == .incomplete {
+            HStack { Text("Note list incomplete. " + (model.discoveryError ?? "Some notes could not be discovered.")); Button("Retry") { model.retryDiscovery() } }
+                .font(.caption).padding().background(.thinMaterial)
+        }
+    }
+
+    @ViewBuilder
     private var detailContent: some View {
         if model.isNoteLoading {
             VStack(spacing: 12) {
                 ProgressView("Loading note…")
                 Text("You can select another note while this one loads.").foregroundStyle(.secondary)
                 Button("Cancel note loading") { model.cancelNoteLoading() }
-            }
-            .accessibilityIdentifier("note.loading")
+            }.accessibilityIdentifier("note.loading")
+        } else if let error = model.noteLoadError {
+            VStack(spacing: 16) {
+                Text(error)
+                Button("Retry note") { Task { await model.retryRequestedNote() } }
+                if model.selectedNote != nil {
+                    Button("Return to previous note") { model.cancelNoteLoading() }
+                }
+            }.padding()
         } else if let selectedNote = model.selectedNote {
             NoteDocumentView(
                 note: selectedNote,
@@ -166,36 +218,12 @@ struct VaultBrowserView: View {
                     }
                 }
             )
-        } else if model.failedNoteURL != nil {
-            ContentUnavailableView {
-                Label("Couldn’t load note", systemImage: "doc.badge.ellipsis")
-            } description: {
-                Text("Its file has not been changed. Retry or select another note.")
-            } actions: {
-                Button("Retry note loading") { Task { await model.retryNoteLoading() } }
-            }
         } else {
             ContentUnavailableView(
                 "Select a Note",
                 systemImage: "book.closed",
                 description: Text("Choose a markdown file or create a new note.")
             )
-        }
-    }
-
-    @ViewBuilder
-    private var discoveryStatus: some View {
-        switch model.discoveryState {
-        case .loading:
-            HStack { ProgressView(); Text("Found \(model.notes.count) notes…") }
-                .padding(8).accessibilityIdentifier("notes.discovering")
-        case .incomplete:
-            HStack {
-                Text("Discovery incomplete · \(model.notes.count) notes found")
-                Button("Retry") { model.retryDiscovery() }
-            }
-            .font(.caption).padding(8).accessibilityIdentifier("notes.incomplete")
-        default: EmptyView()
         }
     }
 
@@ -228,12 +256,9 @@ struct VaultBrowserView: View {
                     Button("Create") {
                         let newName = noteName
                         let targetFolderPathComponents = createNoteFolderPathComponents
+                        pendingNoteCreation = (newName, targetFolderPathComponents)
                         noteName = ""
                         isShowingCreateNoteSheet = false
-
-                        Task {
-                            await model.createNote(named: newName, inFolderPath: targetFolderPathComponents)
-                        }
                     }
                     .disabled(noteName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -857,27 +882,19 @@ private struct FolderNoteRow: View {
 private struct NotePreviewText: View {
     let preview: NotePreview
     let lineLimit: Int
-
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             switch preview {
             case .omitted: Text("Preview not loaded")
-            case .pending: Text("Loading preview…")
+            case .loading: Text("Loading preview…")
             case .unavailable: Text("Preview unavailable")
             case .empty: Text("Empty note")
-            case let .available(markdown, truncated):
-                if let attributed = try? AttributedString(markdown: markdown,
-                    options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-                    Text(attributed).lineLimit(lineLimit)
-                } else { Text(markdown).lineLimit(lineLimit) }
-                if markdown.isEmpty { Text("No excerpt available") }
+            case let .ready(markdown, truncated):
+                if let attributed = try? AttributedString(markdown: markdown, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) { Text(attributed).lineLimit(lineLimit) }
+                else { Text(markdown).lineLimit(lineLimit) }
                 if truncated { Text("Partial preview").font(.caption2) }
             }
-        }
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-        .multilineTextAlignment(.leading)
-        .fixedSize(horizontal: false, vertical: true)
+        }.font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
     }
 }
 
