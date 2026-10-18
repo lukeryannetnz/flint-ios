@@ -2,65 +2,66 @@
 
 ### Requirement: Auto-select an available note
 
-The system SHALL select a note automatically when notes exist and no current selection can be preserved.
+When a vault contains notes and Flint cannot keep the current selection, Flint SHALL select a note from the current list.
 
-Note-list refresh SHALL update metadata without launching background navigation tasks. Vault opening SHALL establish a selection or pending-content state before returning usable metadata; content loads SHALL be explicit, cancellable, and tied to the current selection generation. Note creation SHALL open only its created note, and metadata refresh after saving SHALL NOT launch fallback navigation.
+Flint SHALL show notes as soon as it has usable file details. It SHALL load note text separately and allow that load to be cancelled. Each request SHALL belong to the current vault and selection, so an older result cannot replace a newer choice.
+
+When discovery continues in the background, later batches SHALL add file details without changing the user's selection. Creating a note SHALL open that note only. Refreshing file details after saving SHALL update the selected note without reading its text again or opening another note.
 
 #### Scenario: Open another vault
 
-- GIVEN a note from a previous vault is selected
-- WHEN Flint opens another vault
-- THEN Flint resolves previous unsaved edits through persistence or an explicit retain/discard choice before replacing editor state
-- AND the first available note has a selected or pending-content state when usable metadata is published
-- AND unavailable content does not block the browser
-- AND previous editor text is never saved into the new vault
+- GIVEN a note from one vault is selected
+- WHEN the user opens another vault
+- THEN Flint saves pending edits or asks the user to retain or discard them before replacing the editor
+- AND Flint selects or begins loading the first available note when file details are ready
+- AND a note that cannot be read does not block the browser
+- AND text from the previous note is never saved into the new vault
 
-#### Scenario: Create a note without delayed selection changes
+#### Scenario: Create a note without a later selection change
 
-- WHEN Flint creates a note in a vault with existing notes
-- THEN the created note is selected before creation returns
-- AND refreshing the list does not schedule another note to open later
+- WHEN Flint creates a note in a vault that already has notes
+- THEN Flint selects the created note before creation finishes
+- AND a later file-list refresh does not open another note
 
-#### Scenario: Refresh metadata after saving
+#### Scenario: Refresh file details after saving
 
-- GIVEN the selected note remains in the vault
-- WHEN Flint saves edits and refreshes the note list
-- THEN Flint updates the selected note metadata without re-reading its content
-- AND the editor retains the saved text
+- GIVEN the selected note still exists
+- WHEN Flint saves edits and refreshes its file details
+- THEN Flint updates the selected note's details without reading its text again
+- AND the editor keeps the saved text
 
-#### Scenario: First note after reload
+#### Scenario: Load the first note after a refresh
 
-- GIVEN Flint has reloaded notes for the active vault
-- AND no existing selected note can be matched in the refreshed list
-- WHEN at least one note exists
-- THEN Flint explicitly begins loading the first note in the current sorted note list
-- AND any later user selection invalidates that fallback load
+- GIVEN Flint refreshed the active vault's note list
+- AND Flint cannot keep the current selection
+- WHEN the refreshed list contains at least one note
+- THEN Flint starts loading the first note in the current order
+- AND a later user selection cancels that fallback load
 
-#### Scenario: No notes in vault
+#### Scenario: The vault has no notes
 
-- GIVEN Flint has reloaded notes for the active vault
-- WHEN no markdown notes exist
-- THEN no note is selected
-- AND editor text is cleared
-- AND unsaved state is cleared
+- GIVEN Flint refreshed the active vault's note list
+- WHEN the vault contains no Markdown notes
+- THEN Flint selects no note
+- AND clears the editor text and unsaved state
 
-### Requirement: Programmatic selection does not request navigation
+### Requirement: Model selection changes separately from note reads
 
-When the browser synchronizes its selection with the model, it SHALL not issue another note read for that same selected URL. Only a different user-requested URL SHALL start navigation; synchronization SHALL not cancel a newer pending read or restore an older selection.
+The browser SHALL not request another read when it updates its selection to match the model. A different URL chosen by the user SHALL start a new read. Selection updates SHALL not cancel a newer read or restore an older selection.
 
-#### Scenario: Initial read overlaps browser appearance
+#### Scenario: The browser appears while an initial read is pending
 
-- WHEN the model publishes an initial selection while another explicit note read is pending
-- THEN browser appearance and selection synchronization do not reread the previous note
-- AND the explicit read retains its generation unless the user changes selection
+- WHEN the model publishes its initial selection while a note read is pending
+- THEN showing the browser does not read the previously selected note again
+- AND the pending read keeps its request identity unless the user chooses another note
 
-### Requirement: Reconcile pending browser selection
+### Requirement: Keep the requested note separate from the displayed note
 
-The model SHALL publish pending note selection separately from retained editor content. Failed or cancelled navigation SHALL reset that selection to the retained note, allowing the failed row to be selected again immediately. Late completion SHALL not reset a newer pending selection.
+The model SHALL publish which note is being requested separately from the note text still shown in the editor. If a read fails or is cancelled, the browser SHALL return to the displayed note so the user can try the failed row again. A late result SHALL not change a newer pending selection.
 
-#### Scenario: Retry a failed or cancelled row
+#### Scenario: Retry a failed or cancelled read
 
-- WHEN a note load fails or the user cancels it
-- THEN the browser returns selection to the retained note
-- AND selecting the requested row again starts a fresh read without selecting another row first
-- AND publishing pending selection does not dispatch a duplicate read
+- WHEN a note read fails or the user cancels it
+- THEN the browser selects the note whose text is still displayed
+- AND choosing the failed row again starts a new read without first choosing a different row
+- AND publishing the requested selection does not start a duplicate read

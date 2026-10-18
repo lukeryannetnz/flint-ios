@@ -252,9 +252,13 @@ Actual mutation outcomes SHALL preserve created URLs, complete image-import resu
 
 ### Requirement: Phase 4 loading and document recovery contract
 
-Discovery SHALL publish at most 64 inspected entries per worker batch, yielding provider capacity between batches. The browser SHALL show observed notes while discovery continues, expose cancellation and retry after incomplete discovery, and select an initial note once from the first usable sorted batch unless the user has already selected one. Selected reads SHALL have an independent foreground deadline. Preview demand SHALL originate from visible rows, use at most 64 KiB of source, and retain at most 4 MiB in a version-aware cache. An 8 MiB editable-note limit SHALL be enforced by bounded reads even without reliable size metadata.
+Discovery means finding note files and reading their file details. It SHALL inspect no more than 64 entries in one worker batch, then release capacity for other file work. The browser SHALL show notes as they are found and SHALL offer cancel and retry when discovery is incomplete. Flint SHALL choose an initial note once from the first usable, sorted batch, unless the user has already chosen a note.
 
-Failed save-before-navigation SHALL offer Stay, Retain edits and continue, and Discard edits and continue. Retain SHALL commit an atomic protected app-local recovery record containing the original vault, note destination, and exact text before navigation proceeds. Recovery records SHALL survive relaunch, remain separate from diagnostic export, and be listed with their original destination for explicit restore or deletion. Restoration SHALL require the matching vault and note, and SHALL never automatically overwrite provider content. Discard SHALL explain that an already-running write may still finish. Uncertain writes SHALL prevent overlapping saves to the same destination even after navigation.
+The selected note SHALL load under its own foreground time limit. A preview is a short excerpt shown in the note list. Flint SHALL load previews only for visible rows, read no more than 64 KiB for each, and keep no more than 4 MiB of previews in its cache. The cache SHALL account for observed file changes and clear on explicit refresh. Flint SHALL enforce an 8 MiB limit while reading editable note text, even when file-size details are missing or wrong.
+
+If a save fails before navigation, Flint SHALL offer Stay, Retain edits and continue, or Discard edits and continue. Retain SHALL first save the exact text, vault, and note destination in a protected local recovery record. The record SHALL survive relaunch and remain separate from diagnostic exports. Flint SHALL show the saved destination and require the matching vault and note before restoring. It SHALL never write retained text back automatically.
+
+Discard SHALL tell the user that a write already running in a provider may still finish. Flint SHALL prevent a second write to the same destination until an uncertain first write has finished. This rule still applies after the user changes notes or vaults.
 
 #### Scenario: Discovery fails after a batch
 
@@ -270,7 +274,7 @@ Failed save-before-navigation SHALL offer Stay, Retain edits and continue, and D
 
 ### Requirement: Present edit recovery after dismissing source sheets
 
-Navigation initiated by a create-note sheet or vault picker SHALL begin only after that sheet has dismissed. The retain/discard decision SHALL render directly from model state in the root presentation, without relying on a second UIKit modal or treating an automatic presentation dismissal as a user choice. Dismissing a sheet without confirming a destination SHALL not navigate.
+When the user starts navigation from the create-note sheet or vault picker, Flint SHALL wait until the sheet is closed before navigating. The retain/discard choice SHALL appear from the app's current model state. Closing a sheet by itself SHALL not count as a choice or start navigation.
 
 #### Scenario: A new-note action needs edit recovery
 
@@ -280,7 +284,7 @@ Navigation initiated by a create-note sheet or vault picker SHALL begin only aft
 
 ### Requirement: Recovery-copy actions remain independent
 
-Deleting a retained copy SHALL only remove that copy. It SHALL not restore text, navigate to the original note, or start a provider save. Restore and Delete controls SHALL have independent hit targets in the recovery list.
+Deleting a retained copy SHALL remove only that copy. It SHALL not restore text, open the original note, or save to the provider. Restore and Delete SHALL be separate actions in the recovery list.
 
 #### Scenario: Delete after navigating away
 
