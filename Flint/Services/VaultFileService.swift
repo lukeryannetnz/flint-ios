@@ -282,7 +282,7 @@ final class VaultFileService: VaultFileServing {
             if chunk.isEmpty { return (data, false) }
             data.append(chunk)
         }
-        return (data, try hasMore())
+        return (data, data.count == limit ? try hasMore() : false)
     }
     static func decodePreviewPrefix(_ data: Data, truncated: Bool) throws -> String {
         if let text = String(data: data, encoding: .utf8) { return text }

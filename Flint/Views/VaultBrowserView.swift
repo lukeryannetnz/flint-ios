@@ -84,7 +84,8 @@ struct VaultBrowserView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                             Text(document.savedAt, style: .date)
                             Button("Restore edits into original note") {
-                                Task { await model.restoreRetainedDocument(document); isShowingRetainedEdits = false }
+                                isShowingRetainedEdits = false
+                                Task { await model.restoreRetainedDocument(document) }
                             }
                             Button("Delete retained copy", role: .destructive) {
                                 Task { await model.discardRetainedDocument(document) }

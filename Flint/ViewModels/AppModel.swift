@@ -236,14 +236,20 @@ final class AppModel: ObservableObject {
         discoveryState = batch.cursor != nil ? .loading : batch.incomplete ? .incomplete : .complete
         metadataGeneration = UUID(); let metadata = metadataGeneration
         let initiallySeen = Set(notes.map(\.url))
-        // Publish the browser, but admit initial content before optional continuation can take its lane.
-        if let first = notes.first { await openNote(first) }
-        guard vaultGeneration == generation else { return }
-        initialContentPending = false
-        // The initial selection is now reserved, so finish restoration safety
-        // before its provider read can delay the next launch.
+        // Reserve the first selection before safety work can suspend. Load its text
+        // only after restoration safety has finalized the launch marker.
+        if let first = notes.first {
+            requestedNoteURL = first.url
+            isNoteLoading = true
+        }
         await onUsable?()
+        guard vaultGeneration == generation else { return }
+        guard current(generation, attempt) else { return }
+        if let first = notes.first, requestedNoteURL == first.url, selectedNote == nil {
+            await openNote(first)
+        }
         guard current(generation, attempt), metadataGeneration == metadata else { return }
+        initialContentPending = false
         previewEpoch = UUID(); previewRevision += 1
         guard metadataGeneration == metadata else { return }
         if let cursor = batch.cursor {

@@ -90,7 +90,7 @@ final class RuntimeDiagnosticsTests: XCTestCase {
             await safety.finish(completed: completed)
             await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
             let permitted = await RestorationSafety(directory: folder).begin(launchID: UUID(), explicit: false)
-            XCTAssertTrue(permitted)
+            XCTAssertEqual(permitted, completed)
         }
     }
 

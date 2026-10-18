@@ -405,7 +405,7 @@ final class AppModelTests: XCTestCase {
         }
         safety.finishHook = { await withCheckedContinuation { release = $0 } }
         files.readHook = { url, _ in
-            XCTAssertNotEqual(url, note.url, "Stale initial selection must not read after creation")
+            XCTAssertEqual(url.lastPathComponent, "Created.md", "Stale initial selection must not read after creation")
             return "Created content"
         }
         let model = AppModel(bookmarkStore: bookmarks, fileService: files, restorationSafety: safety)
@@ -467,6 +467,24 @@ final class AppModelTests: XCTestCase {
         let beforeRefreshDemand = model.previewDemand(for: note)
         model.retryDiscovery(); await modelWait { model.discoveryState == .complete }
         XCTAssertNotEqual(model.previewDemand(for: note), beforeRefreshDemand)
+        XCTAssertEqual(model.preview(for: note), .omitted)
+    }
+
+    func testSaveInvalidatesPreviewDemandWhenMetadataRefreshFails() async {
+        let files = FileServiceSpy(), root = URL(fileURLWithPath: "/tmp/preview-demand-failed-refresh")
+        let note = makeNote(title: "Visible", url: root.appendingPathComponent("Visible.md"))
+        files.notesToReturn = [note]
+        let model = AppModel(bookmarkStore: BookmarkStoreSpy(), fileService: files)
+        await model.openVault(at: root)
+        let beforeSave = model.previewDemand(for: note)
+        files.notesAfterSave = nil
+        files.listHook = { _, request in
+            if !files.savedNotes.isEmpty { throw CocoaError(.fileReadNoPermission) }
+            return files.notesToReturn
+        }
+        model.updateNoteText("Updated")
+        await model.saveCurrentNoteIfNeeded()
+        XCTAssertNotEqual(model.previewDemand(for: note), beforeSave)
         XCTAssertEqual(model.preview(for: note), .omitted)
     }
 

@@ -547,6 +547,15 @@ final class VaultFileServiceTests: XCTestCase {
         XCTAssertFalse(prefix.truncated); XCTAssertEqual(sourceBytesRead, 64 * 1024)
     }
 
+    func testExactPreviewSourceLimitIsNotMarkedTruncated() async throws {
+        let url = temporaryDirectoryURL.appendingPathComponent("ExactPreview.md")
+        try Data(repeating: 0x61, count: 64 * 1024).write(to: url)
+        let notes = try await service.listMarkdownNotes(in: temporaryDirectoryURL, request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        let preview = try await service.readPreview(for: XCTUnwrap(notes.first), request: ProviderRequest(vaultURL: temporaryDirectoryURL))
+        guard case let .ready(_, truncated) = preview else { return XCTFail("Expected preview text") }
+        XCTAssertFalse(truncated)
+    }
+
     func testEditableReadEnforcesActualByteLimitAndDoesNotChangeOversizedFile() async throws {
         let limit = 8 * 1024 * 1024
         let url = temporaryDirectoryURL.appendingPathComponent("Large.md")
