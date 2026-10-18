@@ -55,6 +55,12 @@ enum ImageWorkflowTestSupport {
                 try "Nested fixture".write(to: seed, atomically: true, encoding: .utf8)
             }
         }
+        if ProcessInfo.processInfo.environment["FLINT_NOTE_LOADING_TEST"] == "oversized" {
+            let large = root.appendingPathComponent("Large.md")
+            if !FileManager.default.fileExists(atPath: large.path) {
+                try Data(repeating: 0x61, count: 8 * 1024 * 1024 + 1).write(to: large)
+            }
+        }
         return root
     }
     @MainActor

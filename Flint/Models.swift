@@ -27,6 +27,7 @@ struct NoteItem: Identifiable, Hashable {
     let previewMarkdown: String
     let createdAt: Date
     let lastModifiedAt: Date
+    var sourceByteCount: Int? = nil
 
     var id: URL { url }
 }
@@ -133,4 +134,72 @@ extension NoteItem {
         formatter.unitsStyle = .short
         return formatter
     }()
+}
+
+// Discovery values contain metadata only. A cursor is consumed serially by the file adapter.
+struct NoteDiscoveryBatch {
+    let notes: [NoteItem]
+    let cursor: NoteDiscoveryCursor?
+    var incomplete = false
+    var examinedCount = 0
+}
+
+enum NoteDiscoveryState: Equatable {
+    case idle, loading, complete, incomplete
+}
+
+enum NotePreview: Equatable {
+    case omitted, pending, unavailable, empty
+    case available(String, truncated: Bool)
+
+    var byteCost: Int {
+        if case let .available(text, _) = self { return max(1, text.utf8.count) }
+        return 1
+    }
+}
+
+/// Cache and presentation share the same values; no second unbounded copy is retained.
+@MainActor
+final class NotePreviewCache {
+    private struct Entry { let note: NoteItem; let preview: NotePreview; var access: Int }
+    private var entries: [URL: Entry] = [:]
+    private var access = 0
+    private(set) var byteCount = 0
+    let capacity: Int
+    init(capacity: Int = 4 * 1024 * 1024) { self.capacity = capacity }
+
+    func value(for note: NoteItem) -> NotePreview? {
+        guard var entry = entries[note.url] else { return nil }
+        guard entry.note.lastModifiedAt == note.lastModifiedAt,
+              entry.note.sourceByteCount == note.sourceByteCount else { remove(note.url); return nil }
+        access += 1; entry.access = access; entries[note.url] = entry
+        return entry.preview
+    }
+    func insert(_ preview: NotePreview, for note: NoteItem) {
+        remove(note.url)
+        guard preview.byteCost <= capacity else { return }
+        while byteCount + preview.byteCost > capacity || entries.count >= 512 {
+            guard let oldest = entries.min(by: { $0.value.access < $1.value.access })?.key else { break }
+            remove(oldest)
+        }
+        access += 1; entries[note.url] = Entry(note: note, preview: preview, access: access)
+        byteCount += preview.byteCost
+    }
+    func remove(_ url: URL) {
+        if let entry = entries.removeValue(forKey: url) { byteCount -= entry.preview.byteCost }
+    }
+    func removeAll() { entries = [:]; byteCount = 0 }
+}
+
+extension NoteItem {
+    static func mostRecentlyModified(_ lhs: NoteItem, _ rhs: NoteItem) -> Bool {
+        if lhs.lastModifiedAt != rhs.lastModifiedAt { return lhs.lastModifiedAt > rhs.lastModifiedAt }
+        return lhs.relativePath.localizedCaseInsensitiveCompare(rhs.relativePath) == .orderedAscending
+    }
+}
+
+struct NotePreviewDemand: Hashable {
+    let note: NoteItem
+    let epoch: UUID
+    let version: UUID?
 }

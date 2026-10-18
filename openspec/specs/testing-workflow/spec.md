@@ -153,3 +153,13 @@ Blocked-worker fault tests SHALL distinguish logical deadline completion from ac
 - THEN the test awaits actual slot release with a bounded test-harness wait
 - AND it verifies capacity and scope balance after completion
 - AND scheduler delays do not change the tested foreground deadline
+
+### Requirement: Exercise bounded note loading through the browser
+
+The simulator UI suite SHALL exercise oversized selected content through the real file adapter and verify that the browser remains usable without an editable placeholder. Fault fixtures SHALL be confined to a UUID-scoped app-local test directory and excluded from Release behavior.
+
+#### Scenario: Oversized initial note
+
+- WHEN a fixture exceeds the 8 MiB read limit
+- THEN the app presents the size-limit error without an editable partial document
+- AND the user can dismiss the error and select another note successfully

@@ -43,14 +43,45 @@ The system SHALL expose cancellable loading, a slow state after 5 seconds, and a
 
 ### Requirement: Discover notes without eagerly reading all content
 
-The system SHALL discover note metadata incrementally without eagerly reading content, preserve supported file filters and sort rules, and publish usable partial results. Previews SHALL be demand-driven with bounded reads and caching. Progress SHALL report observed counts and stages without inventing a total or download percentage.
+The system SHALL discover note metadata incrementally without eagerly reading content, preserve supported file filters and sort rules, and publish usable partial results. Previews SHALL be demand-driven with bounded reads and caching. Progress SHALL report observed counts and stages without inventing a total or download percentage. Automatic discovery continuation and visible preview requests SHALL not acquire the vault lane before the initial selected-content read has completed logically, including while restoration safety completion awaits. Each discovery batch SHALL contain at most 64 notes and examine at most 256 entries, release its worker slot between batches, and admit explicit reads ahead of optional continuation work. Metadata failures SHALL be diagnosed and mark discovery incomplete without removing usable results.
+
+#### Scenario: Resume discovery within a new coordination claim
+
+- WHEN a subsequent batch receives a relocated coordinated root
+- THEN it resumes relative directory/name state under that current root
+- AND no live enumerator or open handle survives the previous accessor
+- AND name snapshots are taken within coordination and metadata processing remains batched
+
+#### Scenario: Keep note identity stable across provider root relocation
+
+- WHEN a provider supplies a relocated root between discovery batches or note operations
+- THEN all published notes retain stable identities derived from the selected vault URL and relative path
+- AND note content reads, preview reads, writes and note creation resolve those relative paths under their current coordinated root
+- AND content reads and existing-note writes use item-specific coordination after root resolution rather than relying on a directory claim
+- AND previously published notes remain readable after the original physical root disappears
+
+#### Scenario: Refresh finishes during a pending note read
+
+- WHEN an explicit complete refresh finishes while the unchanged document is loading
+- THEN reconciliation is deferred until that read settles
+- AND a missing clean selection opens the first remaining note or clears an empty editor
+- AND later document, vault or metadata generations invalidate deferred reconciliation
+
+#### Scenario: A complete refresh supersedes an older discovery
+
+- WHEN creation or a save publishes a newer complete metadata listing
+- THEN the older incremental cursor is invalidated before that listing is published
+- AND late cursor completion cannot remove newly created notes or restore obsolete metadata
 
 #### Scenario: Bound preview work
 
 - WHEN visible or recently requested notes need previews
 - THEN each preview reads no more than 64 KiB of source and decodes only complete UTF-8 sequences
 - AND omitted, truncated, and unavailable previews are distinguishable
-- AND the preview cache stays within 4 MiB and invalidates on observed content-version changes or explicit refresh
+- AND exact 64 KiB sources are complete previews when a coordinated end-offset check establishes EOF without reading another source byte
+- AND the preview cache stays within 4 MiB and invalidates on observed content-version changes, successful saves, or explicit refresh
+- AND offscreen preview demand is cancelled and stale preview results cannot replace a newer version
+- AND an empty successful source is distinguished from a preview omitted before demand
 - AND discovery preserves regular-file filtering, hidden-file exclusion, supported extensions, relative paths, and existing sort rules
 
 #### Scenario: One provider item is unavailable
@@ -103,6 +134,12 @@ The system SHALL capture destination, access lease, text revision, and operation
 ### Requirement: Bound editable note content
 
 The system SHALL limit a single editable note read to 8 MiB of source bytes, enforce the limit during the read even when size metadata is absent, and report an oversized note as a recoverable read failure. It SHALL NOT silently truncate editable markdown or permit saving a partial read over its source. Markdown preparation SHALL not synchronously read referenced assets.
+
+#### Scenario: Missing or stale size metadata
+
+- WHEN size metadata is missing or a source grows after discovery
+- THEN reads still enforce the 8 MiB limit from actual bytes using bounded chunks
+- AND invalid UTF-8 or an interrupted read never becomes an editable document
 
 #### Scenario: Large or growing provider note
 
@@ -183,6 +220,13 @@ Vault-file methods SHALL accept a request carrying vault-root identity, foregrou
 ### Requirement: Keep uncertain mutations separate from retries
 
 The executor SHALL retain an actual mutation outcome for the owning attempt after logical timeout or cancellation. A retry SHALL first establish whether the original write/create finished, without issuing another mutation while it drains. Saves SHALL snapshot their original text, destination and revision; an asynchronous completion SHALL not clear newer edits. Navigation SHALL first save dirty text and remain at its original destination if saving cannot be established. Explicit retain/discard recovery storage is added in phase 4.
+
+#### Scenario: A late save is confirmed successful
+
+- WHEN an uncertain save later has an actual successful result
+- THEN its note preview and visible demand are invalidated as for an ordinary success
+- AND metadata finalization uses a fresh foreground attempt rather than the expired mutation attempt
+- AND newer dirty revisions remain eligible for ordered persistence
 
 #### Scenario: Creation finishes after its deadline
 

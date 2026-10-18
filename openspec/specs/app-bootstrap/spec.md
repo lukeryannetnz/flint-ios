@@ -82,7 +82,7 @@ The system SHALL present operational failures through a dismissible alert.
 
 ### Requirement: Finish restoration safety records
 
-Successful restoration SHALL commit completion; handled restoration failure SHALL commit abandonment. If that commit fails, the unfinished marker SHALL remain conservative on the next launch. Recovery SHALL describe interrupted restoration without asserting a crash. Diagnostic sharing remains part of the later export phase.
+Successful restoration SHALL commit completion once usable metadata and a selected or pending-content state are published, independently of the initial note accessor. Handled restoration failure before that boundary SHALL commit abandonment. If that commit fails, the unfinished marker SHALL remain conservative on the next launch. Recovery SHALL describe interrupted restoration without asserting a crash. Diagnostic sharing remains part of the later export phase.
 
 #### Scenario: Previous restoration was interrupted
 
@@ -112,3 +112,9 @@ Bookmark resolution, creation and security-scope acquisition SHALL run on the bo
 - WHEN bookmark resolution succeeds but discovery or note reading reports corrupt content
 - THEN the saved bookmark remains available for retry
 - AND corruption in a later file stage is not evidence of invalid bookmark data
+
+#### Scenario: Browser is usable while initial content is pending
+
+- WHEN restoration publishes a usable browser and pending initial selection
+- THEN restoration safety completion is committed without awaiting note content
+- AND changing selection or vault during that commit cannot start an obsolete initial read or change the new screen
