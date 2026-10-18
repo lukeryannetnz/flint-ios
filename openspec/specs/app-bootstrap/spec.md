@@ -2,7 +2,9 @@
 
 ## Purpose
 
-Define how Flint launches, restores a previously selected vault, and decides whether to show onboarding or the main note browser.
+Users need to return to their notes after launching Flint. Reopening a saved vault can fail or stall, especially when its files come from a service such as Dropbox. Flint must keep the screen usable and offer recovery without losing the saved vault selection.
+
+This spec defines startup, restoration of the previous vault, and the choice between onboarding and the note browser. A bookmark is saved iOS permission data used to reopen a chosen folder. A security-scoped access lease keeps that permission active while the interface or a file worker needs it.
 
 ## Requirements
 
@@ -15,8 +17,8 @@ The system SHALL begin in a loading state while vault restoration is attempted.
 - GIVEN the app has just launched
 - WHEN the root view appears
 - THEN the app model starts bootstrap once
-- AND the interface shows a full-screen loading state until bootstrap decides the next phase
-- AND the loading presentation covers the entire display without exposing default system background chrome
+- AND the interface shows a full-screen loading screen until bootstrap decides the next phase
+- AND the loading presentation covers the entire display without exposing default system background or controls
 - AND the loading presentation uses Flint branding rather than a bare progress indicator
 
 ### Requirement: Onboarding without a stored vault
@@ -32,7 +34,9 @@ The system SHALL show onboarding when no vault bookmark has been stored.
 
 ### Requirement: Restore previously selected vault
 
-The system SHALL attempt to reopen the previously selected vault from persisted bookmark data only after restoration safety authorizes automatic access. An unfinished, corrupt, unreadable or unwritable safety marker SHALL show recovery before bookmark resolution or provider access. Explicit retry and choosing another vault SHALL preserve the bookmark unless resolution independently proves it unusable.
+Before reopening the saved vault, Flint SHALL check its restoration safety marker. This local record tracks whether a previous restoration finished.
+
+Flint SHALL show recovery before resolving the bookmark or accessing the provider if the marker is unfinished, corrupt, unreadable, or unwritable. Explicit retry and choosing another vault SHALL preserve the bookmark unless bookmark resolution separately proves it unusable.
 
 #### Scenario: Stored bookmark resolves successfully
 
@@ -56,15 +60,17 @@ The system SHALL discard a stored bookmark only when resolution proves it invali
 
 ### Requirement: Single active security-scoped vault
 
-The system SHALL retain one UI-active vault scope and independent worker-owned scope leases. Switching releases the UI lease only after dirty text is saved; cancelled or timed-out workers retain their source and destination leases until actual completion.
+Flint SHALL keep one access lease for the vault shown in the interface. File workers SHALL hold their own leases.
+
+When switching vaults, Flint SHALL release the interface lease only after saving unsaved text. Cancelled or timed-out workers SHALL keep their source and destination leases until they actually finish.
 
 #### Scenario: Open a different vault
 
 - GIVEN a vault is currently open
 - WHEN the user opens another vault
-- THEN dirty text is saved before editor state changes, or navigation stays at the original destination
+- THEN unsaved text is saved before editor state changes, or navigation stays at the original destination
 - AND any pending autosave task is cancelled
-- AND the UI releases its previous scope while any draining worker retains its own balanced lease
+- AND the UI releases its previous scope while any worker that is still finishing retains its own balanced lease
 - AND no obsolete operation can publish state into the new vault
 - AND explicit retain/discard choices and document recovery remain planned for phase 4
 
@@ -82,7 +88,9 @@ The system SHALL present operational failures through a dismissible alert.
 
 ### Requirement: Finish restoration safety records
 
-Successful restoration SHALL commit completion; handled restoration failure SHALL commit abandonment. If that commit fails, the unfinished marker SHALL remain conservative on the next launch. Recovery SHALL describe interrupted restoration without asserting a crash. Diagnostic sharing remains part of the later export phase.
+After successful restoration, Flint SHALL save a completed marker. After a handled restoration failure, it SHALL save an abandoned marker. If either write fails, the unfinished marker SHALL still require recovery on the next launch.
+
+Recovery SHALL describe interrupted restoration without claiming that a crash occurred. Diagnostic sharing remains part of the later export phase.
 
 #### Scenario: Previous restoration was interrupted
 
@@ -94,7 +102,9 @@ Successful restoration SHALL commit completion; handled restoration failure SHAL
 
 ### Requirement: Bound asynchronous bootstrap setup
 
-Bookmark resolution, creation and security-scope acquisition SHALL run on the bounded provider executor. Automatic restoration SHALL use one foreground-active attempt deadline, expose current stage and cancellation, and preserve bookmarks on temporary provider errors, cancellation and timeout. Only evidence of an invalid bookmark SHALL clear its saved data.
+Resolving and creating bookmarks, and acquiring iOS file permission, SHALL run on the provider executor. This scheduler limits the number of file workers.
+
+Automatic restoration SHALL use one deadline that counts only foreground-active time. It SHALL show the current stage and allow cancellation. Temporary provider errors, cancellation, and timeout SHALL preserve bookmarks. Flint SHALL clear saved bookmark data only when evidence shows that the bookmark is invalid.
 
 #### Scenario: User leaves a cancelled restoration
 

@@ -2,7 +2,9 @@
 
 ## Purpose
 
-Define portable note image storage, rendering, and authoring within the active vault.
+Users need to view and insert images in their notes. Those images must remain usable when the vault moves to another device, and missing images must not prevent reading the note.
+
+This spec defines image display, insertion, and storage inside the active vault. An image reference is a Markdown link to an image file. A relative path locates that file from the note's folder. A managed asset folder is the folder Flint creates beside a note to hold its imported images. Alt text is the description included in a Markdown image reference; Flint also displays it as a caption.
 
 ## Requirements
 
@@ -30,7 +32,7 @@ The system SHALL resolve markdown image references for an open note using the no
 - **AND** Flint shows a broken-image state instead of rendering the asset
 
 ### Requirement: Render note images as responsive media cards
-The system SHALL render embedded note images as polished visual cards rather than raw file links.
+The system SHALL render embedded note images as image cards rather than plain file links.
 
 #### Scenario: Render a large image inline
 - **WHEN** Flint displays an embedded image whose source dimensions exceed the note column width
@@ -61,8 +63,8 @@ The system SHALL let users inspect embedded note images in a dedicated fullscree
 - **AND** the user can pan the zoomed image
 - **AND** Flint provides a clear dismissal gesture or control
 
-### Requirement: Insert images from professional note authoring flows
-The system SHALL provide first-class image insertion from common capture and selection sources.
+### Requirement: Insert images from common sources
+The system SHALL let users insert images from common capture and selection sources.
 
 #### Scenario: Choose an image source while editing
 - **WHEN** the user chooses to insert an image into an open note
@@ -79,7 +81,7 @@ The system SHALL provide first-class image insertion from common capture and sel
 - **AND** Flint inserts a markdown image reference for the saved asset into the note
 
 ### Requirement: Store inserted images with stable relative references
-The system SHALL keep inserted note images portable with the vault by copying them into managed local storage and writing relative markdown references.
+The system SHALL keep inserted note images portable with the vault by copying them into managed storage inside the vault and writing relative markdown references.
 
 #### Scenario: Create a managed note asset folder on first insert
 - **WHEN** the user inserts the first image into a note that does not yet have managed image storage
@@ -104,7 +106,7 @@ The system SHALL render existing vault images in supported readable formats, inc
 - **THEN** Flint renders that image inline and in the fullscreen viewer if opened
 - **AND** Flint does not rewrite the note markdown or transcode the asset merely to display it
 
-### Requirement: Apply automatic image sizing heuristics
+### Requirement: Size images automatically
 The system SHALL choose sensible default display sizing for inserted note images without requiring manual width selection during insertion.
 
 #### Scenario: Insert a landscape image

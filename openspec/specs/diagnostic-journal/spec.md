@@ -2,14 +2,18 @@
 
 ## Purpose
 
-Describe the debug log Flint will save on the iPhone so developers can see what the app was doing before a file-loading failure.
+When file loading fails, developers need to know what Flint was doing and where it stopped. The debug log must provide that evidence without exposing private notes or slowing down editing.
 
-Status: implemented and simulator-tested. Real-iPhone Dropbox performance validation remains pending; this change adds logging and does not establish that provider hangs or crashes are fixed.
+This spec defines the debug log saved on the iPhone, its privacy rules, and its storage limits.
+
+Status: implemented and simulator-tested. Real-iPhone Dropbox performance validation remains pending. Logging alone does not establish that provider hangs or crashes are fixed.
 
 ## Requirements
 
 ### Requirement: Record what the app is doing and how long it takes
-The system SHALL initialize debug logging in development and release builds before it tries to reopen a vault, and record entries throughout each action through its final result. Each entry SHALL include the log format version, date/time, elapsed time measured independently of the wall clock, severity, step, result, app version/build, launch ID, action ID and related parent-action ID where needed.
+Flint SHALL start debug logging in development and release builds before trying to reopen a vault. It SHALL record each action from its start through its final result.
+
+Each entry SHALL include the log format version, date and time, elapsed time measured independently of the wall clock, severity, step, result, app version and build, launch ID, and action ID. It SHALL include the parent action ID where needed to connect related actions.
 
 #### Scenario: Follow a file-loading or saving action
 - WHEN Flint opens or edits a vault stored through the Files app
@@ -20,7 +24,9 @@ The system SHALL initialize debug logging in development and release builds befo
 - AND timing markers let a developer match these actions to an iPhone performance recording
 
 ### Requirement: Keep private document information out of logs
-The system SHALL save and export only explicitly permitted log fields, limited lists of error categories/codes and file identifiers that change on each app launch. It SHALL exclude note text, file/folder paths and titles, captions, image contents, saved folder-permission data, account details, credentials and unrestricted error descriptions or dictionaries.
+Flint SHALL save and export only explicitly permitted fields. Error categories and codes SHALL come from limited lists. File identifiers SHALL change on each app launch.
+
+Logs SHALL exclude note text, file and folder paths, titles, captions, image contents, saved folder-permission data, account details, and credentials. They SHALL also exclude unrestricted error descriptions and error dictionaries.
 
 #### Scenario: A preview cannot be read
 - WHEN Flint cannot read a preview or file details and uses a placeholder
@@ -42,7 +48,9 @@ The system SHALL save versioned debug logs in protected app storage on the iPhon
 - AND a logging error does not trigger an endless stream of new log errors or crash the app
 
 ### Requirement: Share a safe logging interface with recovery features
-The logger SHALL expose typed action/step identifiers, privacy-filtered error categories, and asynchronous snapshots of complete saved entries. Snapshot reads SHALL use only app-local storage and skip invalid or incomplete records. No API SHALL accept arbitrary log messages or document text.
+The logger SHALL provide defined action and step identifiers, error categories filtered for privacy, and asynchronous snapshots of complete saved entries. A snapshot is a copy of the saved log entries available at the time of the request.
+
+Snapshot reads SHALL use only app-local storage and skip invalid or incomplete records. No logging interface SHALL accept arbitrary messages or document text.
 
 #### Scenario: A recovery feature needs logs while a provider is stuck
 - WHEN it asks the logger for saved entries

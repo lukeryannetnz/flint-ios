@@ -2,13 +2,17 @@
 
 ## Purpose
 
-Define repository-local OpenSpec workflow support and shared language for Flint contributors.
+Contributors need to find the current requirements, propose changes, and describe Flint using consistent language. Clear documentation helps them understand the app before changing it.
+
+This spec defines the repository's OpenSpec support, README overview, and shared vocabulary. OpenSpec keeps current requirements in `openspec/specs/` and proposed changes in `openspec/changes/`.
 
 ## Requirements
 
 ### Requirement: README overview
 
-The root README SHALL summarize Flint's scope and link to `openspec/specs/` as the source of truth for current behavior, without duplicating feature or specification lists. It SHALL link to `openspec/changes/` for proposed changes. Its architecture overview SHALL use a simplified Mermaid diagram and plain-language description of the main responsibilities rather than a file-by-file inventory.
+The root README SHALL explain Flint's scope. It SHALL link to `openspec/specs/` for current behavior and `openspec/changes/` for proposed changes. It SHALL not duplicate feature or specification lists.
+
+The architecture overview SHALL use a simplified Mermaid diagram and plain-language descriptions of the main responsibilities. It SHALL describe how the parts fit together rather than list individual files.
 
 #### Scenario: Reader explores the project
 
@@ -39,9 +43,9 @@ Installing repository-local skills SHALL preserve existing specifications, chang
 
 ### Requirement: Shared domain language
 
-The repository SHALL define Flint's common terms in root `GLOSSARY.md` and explain their relationships in `docs/domain-model.md`. Reader-facing specifications and review descriptions SHALL use these terms consistently and explain unfamiliar technical terms where they are needed. Existing machine identifiers MAY remain unchanged.
+The repository SHALL define common Flint terms in root `GLOSSARY.md`. It SHALL explain the relationships between those terms in `docs/domain-model.md`. Specifications and review descriptions SHALL use these terms consistently and explain unfamiliar technical terms where needed. Existing machine identifiers MAY remain unchanged.
 
-The glossary SHALL contain vocabulary rather than implementation contracts. The domain model SHALL define concepts and their relationships without listing implementation status or work in progress. Implementation plans and status SHALL remain in the relevant change documents.
+The glossary SHALL define vocabulary. It SHALL not define implementation contracts. The domain model SHALL describe concepts and relationships without listing implementation status or work in progress. Plans and status SHALL stay in the relevant change documents.
 
 #### Scenario: Contributor describes logging and file availability
 

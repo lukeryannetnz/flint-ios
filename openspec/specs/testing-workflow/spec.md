@@ -2,7 +2,9 @@
 
 ## Purpose
 
-Define how Flint's automated test suite should run for contributors and CI, including the default simulator lane and the optional device-validation lane.
+Contributors need repeatable tests that catch failures before changes reach users. The default run must work without a physical device or a contributor's signing credentials. Some image workflows also need checks on a real iPhone.
+
+This spec defines local and automated test runs. CI means the tests run by GitHub Actions. The default test lane is the full simulator suite. Device validation is an additional run on a connected iPhone with local signing configured.
 
 ## Requirements
 
@@ -135,7 +137,9 @@ Changes to production image source-adapter behavior or permissions SHALL receive
 - **AND** the change remains awaiting device validation and is not declared complete
 
 ### Requirement: Folder-aware note creation has automated coverage
-The default simulator lane SHALL verify that creating a note uses the destination displayed in the creation sheet, including a nested folder and Recent mode after browsing that folder. Coverage SHALL also verify nested note selection completes without delayed fallback navigation, duplicate names within a destination are rejected, and matching filenames in different folders are allowed.
+The default simulator suite SHALL verify that a new note is stored in the destination shown in the creation sheet. Coverage SHALL include creating in a nested folder and creating from Recent mode after browsing that folder.
+
+It SHALL also verify that selecting a nested note finishes without a delayed fallback selection. Duplicate names in one destination SHALL be rejected. Matching filenames in different folders SHALL be allowed.
 
 #### Scenario: Create notes through the folder browser and Recent mode
 - **GIVEN** a deterministic test vault contains a nested folder
@@ -145,7 +149,11 @@ The default simulator lane SHALL verify that creating a note uses the destinatio
 
 ### Requirement: Observe actual worker completion in fault tests
 
-Blocked-worker fault tests SHALL distinguish logical deadline completion from actual worker return using explicit lifecycle notifications. Cleanup assertions SHALL follow notification that slots and leases were released, rather than a short wall-clock polling assumption. Controlled foreground deadlines SHALL remain unchanged. Hosted CI SHALL run simulator test runners serially to avoid unnecessary cloned simulator resource contention while still exercising concurrency inside the bounded executor.
+Tests that deliberately block file workers SHALL distinguish the user-facing timeout from the worker actually returning. They SHALL use explicit lifecycle notifications to observe that return.
+
+Cleanup checks SHALL wait for notification that worker slots and access leases were released. They SHALL not assume cleanup finishes within a short polling interval. Controlled foreground deadlines SHALL remain unchanged.
+
+Hosted CI SHALL run simulator test runners one at a time to avoid competing cloned simulators. Tests SHALL still exercise concurrency inside the executor with bounded worker capacity.
 
 #### Scenario: Worker cleanup is delayed on the CI host
 
