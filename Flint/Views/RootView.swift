@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct RootView: View {
     @ObservedObject var model: AppModel
@@ -7,19 +8,21 @@ struct RootView: View {
         Group {
             switch model.phase {
             case .loading:
-                LoadingScreenView()
+                LoadingScreenView(model: model)
             case .onboarding:
                 VaultOnboardingView(model: model)
                     .onAppear { DebugLog.shared.observe(.firstUsableScreen) }
-            case .restorationRecovery:
+            case .restorationRecovery, .providerRecovery:
                 VStack(spacing: 20) {
-                    Text("Vault restoration was interrupted")
+                    Text("Vault recovery")
                         .font(.title2.bold())
-                    Text("Flint could not safely reopen your previous vault automatically. Its saved selection is still available.")
+                    Text(model.recoveryMessage)
                         .multilineTextAlignment(.center)
                     Button("Retry previous vault") { Task { await model.retryRestoration() } }
                         .disabled(model.isBusy)
                     Button("Choose another vault") { Task { await model.chooseAnotherVault() } }
+                    Button("Export diagnostics") { Task { await model.exportDiagnostics() } }
+                        .disabled(model.isExportingDiagnostics)
                 }
                 .padding(24)
                 .onAppear { DebugLog.shared.observe(.firstUsableScreen) }
@@ -27,6 +30,9 @@ struct RootView: View {
                 VaultBrowserView(model: model)
                     .onAppear { DebugLog.shared.observe(.firstUsableScreen) }
             }
+        }
+        .sheet(item: $model.diagnosticShare, onDismiss: { model.finishDiagnosticShare() }) { item in
+            DiagnosticActivityView(url: item.url)
         }
         .safeAreaInset(edge: .bottom) {
             #if DEBUG
@@ -77,6 +83,7 @@ struct RootView: View {
 }
 
 private struct LoadingScreenView: View {
+    @ObservedObject var model: AppModel
     var body: some View {
         ZStack {
             LinearGradient(
@@ -136,7 +143,7 @@ private struct LoadingScreenView: View {
                     ProgressView()
                         .tint(.white)
 
-                    Text("Loading Flint…")
+                    Text(model.isSlow ? "The provider is taking longer than usual…" : "Loading Flint…")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
                 }
@@ -148,11 +155,41 @@ private struct LoadingScreenView: View {
                         .stroke(Color.white.opacity(0.10), lineWidth: 1)
                 }
 
+                Text(model.loadingStage.loadingLabel)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.7))
+                Button("Cancel loading") { model.cancelLoading() }
+                    .accessibilityIdentifier("vault.loading.cancel")
+                Button("Export diagnostics") { Task { await model.exportDiagnostics() } }
+                    .disabled(model.isExportingDiagnostics)
                 Spacer()
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 36)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+private struct DiagnosticActivityView: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+private extension DebugLogStep {
+    var loadingLabel: String {
+        switch self {
+        case .bookmarkLoad, .bookmarkResolve: return "Checking saved vault"
+        case .bookmarkCreate: return "Saving vault selection"
+        case .securityScope: return "Preparing vault access"
+        case .coordinationRead, .coordinationWrite: return "Waiting for file access"
+        case .enumeration, .metadata, .preview: return "Discovering notes"
+        case .noteRead, .fileRead: return "Reading note content"
+        case .noteCreate, .vaultCreate, .fileWrite: return "Creating files"
+        default: return "Opening vault"
         }
     }
 }

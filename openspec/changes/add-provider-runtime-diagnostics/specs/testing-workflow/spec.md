@@ -18,3 +18,14 @@ Changes to provider diagnostics and asynchronous vault, note, or image access SH
 - WHEN deterministic simulator validation passes but no suitable iPhone/Dropbox setup is available
 - THEN the change remains awaiting device validation
 - AND the result does not claim the reported physical-device failure is resolved
+
+### Requirement: Observe actual worker completion in fault tests
+
+Blocked-worker fault tests SHALL distinguish logical deadline completion from actual worker return using explicit lifecycle notifications. Cleanup assertions SHALL follow notification that slots and leases were released, rather than a short wall-clock polling assumption. Controlled foreground deadlines SHALL remain unchanged. Hosted CI SHALL run simulator test runners serially to avoid unnecessary cloned simulator resource contention while still exercising concurrency inside the bounded executor.
+
+#### Scenario: Worker cleanup is delayed on the CI host
+
+- WHEN a deliberately blocked accessor returns after logical timeout
+- THEN the test awaits actual slot release with a bounded test-harness wait
+- AND it verifies capacity and scope balance after completion
+- AND scheduler delays do not change the tested foreground deadline

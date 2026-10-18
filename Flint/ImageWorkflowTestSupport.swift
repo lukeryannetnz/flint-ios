@@ -13,7 +13,6 @@ enum ImageWorkflowSaveFailure {
 }
 
 /// Enabled only by the UI-test runner. Fixtures live in this app's container.
-@MainActor
 enum ImageWorkflowTestSupport {
     static var runID: String? {
         guard let raw = ProcessInfo.processInfo.environment["FLINT_IMAGE_TEST_RUN"],
@@ -58,6 +57,7 @@ enum ImageWorkflowTestSupport {
         }
         return root
     }
+    @MainActor
     static func snapshot(model: AppModel) -> String {
         guard let note = model.selectedNote, let root else { return "{}" }
         let saved = (try? String(contentsOf: note.url, encoding: .utf8)) ?? ""

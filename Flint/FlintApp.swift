@@ -19,6 +19,7 @@ struct FlintApp: App {
             RootView(model: model)
                 .onChange(of: scenePhase, initial: true) { _, phase in
                     RuntimeMonitoring.monitor.setActive(phase == .active)
+                    ForegroundClock.shared.setActive(phase == .active)
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
                     DebugLog.shared.observe(.memoryWarning)

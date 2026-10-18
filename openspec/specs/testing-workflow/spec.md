@@ -142,3 +142,14 @@ The default simulator lane SHALL verify that creating a note uses the destinatio
 - **WHEN** the automated test browses that folder and creates a note
 - **THEN** the sheet displays that folder and the created note is stored there
 - **AND** after switching to Recent mode, the sheet displays Vault Root and creation stores the note at the root
+
+### Requirement: Observe actual worker completion in fault tests
+
+Blocked-worker fault tests SHALL distinguish logical deadline completion from actual worker return using explicit lifecycle notifications. Cleanup assertions SHALL follow notification that slots and leases were released, rather than a short wall-clock polling assumption. Controlled foreground deadlines SHALL remain unchanged. Hosted CI SHALL run simulator test runners serially to avoid unnecessary cloned simulator resource contention while still exercising concurrency inside the bounded executor.
+
+#### Scenario: Worker cleanup is delayed on the CI host
+
+- WHEN a deliberately blocked accessor returns after logical timeout
+- THEN the test awaits actual slot release with a bounded test-harness wait
+- AND it verifies capacity and scope balance after completion
+- AND scheduler delays do not change the tested foreground deadline
